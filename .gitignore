@@ -1,0 +1,7 @@
+# Dependencies installed for local development
+node_modules/
+# Packed plugin tarballs produced by `npm pack`
+*.tgz
+# Local research notes (not published with the plugin)
+.notes/
+*.log

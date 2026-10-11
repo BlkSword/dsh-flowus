@@ -1,0 +1,18 @@
+# @mars-sea/dsh-flowus bundle layer.
+#
+# One plugin row. `name` must be the FULL package specifier as installed in the
+# profile's node_modules: the loader imports it as a module, so a bare
+# `dsh-flowus` here fails to resolve (ERR_MODULE_NOT_FOUND). Quote the value —
+# a YAML scalar starting with `@` is an indicator and fails to parse.
+#
+# Config defaults already point at the official endpoint
+# (https://mcp.flowus.cn/message); the block below is the explicit, editable
+# copy so a user can see and change every switch from the profile layer.
+- insert:
+    - id: flowus
+      name: "@mars-sea/dsh-flowus"
+      config:
+        serverUrl: "https://mcp.flowus.cn/message"
+        serverName: "flowus"
+        scope: "all"
+        autoConnect: true
