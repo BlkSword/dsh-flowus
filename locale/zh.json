@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "FlowUs",
+    "description": "在 DeepSeek Harness 里使用 FlowUs：浏览器一键授权（OAuth），把官方 MCP 服务器的工具注册成 Agent 原生工具，并在设置页中查看授权、连接与工具状态。"
+  }
+}

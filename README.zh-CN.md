@@ -1,6 +1,6 @@
 # @mars-sea/dsh-flowus
 
-在 DeepSeek Harness（DSH）里使用 FlowUs 的官方 MCP 服务器：**浏览器一键授权（OAuth 2.1 + PKCE + 动态客户端注册）**，并把 FlowUs 的工具注册成 Agent 原生工具，同时提供 `/flowus` 斜杠命令。
+在 DeepSeek Harness（DSH）里使用 FlowUs 的官方 MCP 服务器：**浏览器一键授权（OAuth 2.1 + PKCE + 动态客户端注册）**，把 FlowUs 的工具注册成 Agent 原生工具，提供 `/flowus` 斜杠命令，并在**设置面板里有一个独立的 FlowUs 页面**用来查看状态与完成授权。
 
 - 服务器地址：`https://mcp.flowus.cn/message`（官方 MCP 端点，无需在 URL 里放 token）
 - 全程**没有静态 token**：不改配置、不粘贴密钥，refresh token 由插件私有保存并自动续期
@@ -30,7 +30,7 @@ dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
 2. 发现它声明了 `dsh.bundle.patch`，于是**自动把 `@mars-sea/dsh-flowus` 追加到 `dsh.profile.bundles`**（无需手改 `package.json`）；
 3. 通过 `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` 等 peer 依赖解析到 DSH 安装内的实现。
 
-装好后重载 profile（`dsh-hmr` 打开时保存文件即自动重载，否则重启 `dsh web`），在 GUI 输入 `/flowus status` 即可确认插件已加载。
+装好后**重启 `dsh web` 并刷新浏览器页面**：客户端半的入口图（`window.__DSH_BOOT__`）在启动时组装，默认配置下 `dsh-hmr` 的 `root: []` 只保留显式配置监视点，所以「新增一个插件」一般不会热加载进正在运行的进程。重启后在 GUI 输入 `/flowus status`，或打开「设置 → FlowUs」确认。
 
 > **Windows 提示**：pnpm 会把 `link:D:/...`、`file:D:/...` 这类绝对路径当成相对路径（生成指向 `...\profiles\web\D:\...` 的坏链接）。所以这里用「打 tarball + 相对路径」的方式安装；不要用绝对路径的 `link:`。
 
@@ -57,6 +57,21 @@ dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
 | `/flowus call <工具> [JSON]` | 直接调用某个工具，例如 `/flowus call search_pages {"query":"周报"}` |
 | `/flowus reload` | 重连并重新同步工具列表 |
 | `/flowus help` | 用法 |
+
+## 设置页（设置 → FlowUs）
+
+插件用 `settings.section` 槽位（`id: flowus`）向设置面板贡献一个独立页面，专门用于查看与操作本插件：
+
+- **状态徽标**：未授权 / 等待浏览器授权 / 已授权未连接 / 已连接（含工具数），并用 `StateDot` 与 `Tag` 呈现（ongoing / warning / done）。
+- **事实行**：MCP 地址、工具命名空间、凭据文件路径、授权 scope、过期时间、是否含 refresh token、上次同步时间、最近错误。
+- **操作**：`登录 FlowUs`（未授权时）/ `重新授权`（已授权时）、`取消`（登录中）、`重新连接`、`退出登录`、`刷新`。
+- **工具列表**：当前注册给模型的 `mcp__flowus__*` 工具及其一句话说明。
+
+页面数据来自宿主路由 `GET /flowus/api/status`；按钮分别 POST 到 `/flowus/api/login`、`/flowus/api/login-cancel`、`/flowus/api/logout`、`/flowus/api/reload`。所有响应都是**同一份状态快照**（`{ ok, snapshot }`），所以一个渲染路径覆盖所有操作。
+
+这些路由和 DSH 其它 Web 接口一样，先经过连接服务的信任栅栏（Host/Origin 校验 + 登录令牌 Cookie）：未认证请求直接 401，不会被读取状态或触发登录。
+
+登录采用「先返回、再轮询」：`POST /flowus/api/login` 立刻返回并在后台跑浏览器授权（上限 `loginTimeoutMs`），页面在等待期间每 1.5 秒刷新一次状态，因此不会把 HTTP 请求挂住几分钟。
 
 ## 配置
 
@@ -115,6 +130,7 @@ dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
 - 主动续期：插件记录了 token 的获取时间与有效期，连接前若已过期会先刷新，避免先撞 401。
 - 工具列表变化：MCP 的 `notifications/tools/list_changed` 会触发重新同步（整代替换，失败保留旧的一代）。
 - 命名冲突：若 `mcp__flowus__*` 已被别的插件占用，则本次同步整体拒绝，不会半发布。
+- 设置页：宿主半用 `ctx.webServer.register` 注册 `/flowus/api/*`，客户端半是 `window.__ModuleLoader__` classic script（`lib/client.js`，无需构建步骤），注册进 `settings.section` 槽位；两者通过 `fetch` + JSON 快照通信（没有自建 RPC 协议）。
 
 ## 开发与测试
 
@@ -125,7 +141,7 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # 离线测试（80 项）
+npm test                                            # 离线测试（99 项）
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟（3 项）
 ```
 
@@ -138,6 +154,8 @@ $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟�
 - `tests/callback-server.test.js` 回调校验（state / code / error / 端口回退 / abort）
 - `tests/browser.test.js` 无 shell 的浏览器启动与候选回退
 - `tests/tool-bridge.test.js` MCP JSON Schema → DSH 参数 DSL、输出契约（用 DSH 自己的 schema 编译器校验）
+- `tests/http-api.test.js` 设置页宿主 API：信任栅栏、方法守卫、`{ok, snapshot}` 封装、错误路径
+- `tests/client-bundle.test.js` 浏览器半：`__ModuleLoader__` 注册契约、中英文字典键一致性、`settings.section` 注册、与宿主路由的路径交叉校验、视图模型分支、一次完整渲染
 - `tests/plugin-apply.test.js` 真 cordis 上下文装载、命令面、释放
 - `tests/plugin-real-services.test.js` 装真实的 `ToolRuntime` / `CommandRuntime` / `SystemPrompt`：命令真的进了注册表、提示词段真的进了 assembly、桥接工具真的注册并跑完整执行管线（参数校验、输出契约校验、错误路径）
 - `tests/flowus-live.test.js` 真实端点发现、PKCE 授权 URL、未授权连接的错误映射
@@ -153,19 +171,21 @@ dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
 
 | 现象 | 处理 |
 | --- | --- |
-| `/flowus` 命令不存在 | 插件没加载：确认 `dsh.profile.bundles` 里有 `@mars-sea/dsh-flowus`，并重载/重启 profile |
-| 授权后没有工具 | `/flowus reload`；再看 `/flowus status` 的错误行 |
+| `/flowus` 命令不存在 | 插件没加载：确认 `dsh.profile.bundles` 里有 `@mars-sea/dsh-flowus`，然后**重启 `dsh web`** |
+| 设置里没有 FlowUs 页面 | 同上：客户端入口图在启动时组装；重启 `dsh web` 并刷新浏览器页面 |
+| 设置页里点按钮报 401 | 页面请求需要带登录 Cookie；请从 `dsh web` 打印的带 `?token=` 的地址打开 GUI |
+| 授权后没有工具 | `/flowus reload`；再看 `/flowus status` 或设置页的错误行 |
 | 端口 42813 被占用 | 会自动改用临时端口，但会重新做一次客户端注册（可能触发注册限流）；建议在配置里换一个固定 `callbackPort` |
-| 注册被限流（`too_many_requests`） | 等一会儿再 `/flowus login`；插件会复用已注册客户端，通常只需注册一次 |
-| 浏览器没打开 | 命令结果里会打印授权 URL，手动打开即可 |
+| 注册被限流（`too_many_requests`） | 等一会儿再登录；插件会复用已注册客户端，通常只需注册一次 |
+| 浏览器没打开 | 命令结果或设置页里会显示授权 URL，手动打开即可 |
 | 工具名冲突 | 改 `serverName`（例如 `flowus2`），命名空间随之变化 |
 
 ## 已知限制
 
 - 图片 / 音频等富内容块不内联渲染（以占位文本呈现）；FlowUs 的页面/数据库/搜索以文本和 JSON 为主。
 - 不支持 MCP 任务扩展：`execution.taskSupport === "required"` 的工具会被跳过并在日志里说明。
-- 不注册 MCP resources / prompts（本插件的范围就是工具 + 命令）。
-- 没有客户端 UI 面板（对比 commandcode provider 的设置页）：所有交互都在聊天输入框的 `/flowus` 命令里。
+- 不注册 MCP resources / prompts（本插件的范围就是工具 + 命令 + 设置页）。
+- 设置页只做状态展示与授权/连接操作，没有细粒度的「按工具开关」；工具可见性目前只有 `maxTools` 上限与命名冲突保护。
 - 首次授权必须由人在浏览器确认（这是 OAuth 的设计，不是缺陷）。
 
 ## 目录结构
@@ -173,10 +193,15 @@ dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
 ```
 dsh-flowus/
 ├─ cordis.patch.yml      # bundle 层：插入 flowus 插件行与默认配置
-├─ package.json          # dsh.bundle.patch / peers / 打包白名单
+├─ package.json          # dsh.bundle.patch / dsh.client / peers / 打包白名单
 ├─ icon.svg
+├─ locale/               # 插件列表里的显示名与简介（en/zh）
+│  ├─ en.json
+│  └─ zh.json
 ├─ lib/
-│  ├─ index.js           # 插件入口：Config、apply、工具发布、/flowus 命令、提示词段
+│  ├─ index.js           # 插件入口：Config、apply、工具发布、/flowus 命令、提示词段、设置页路由
+│  ├─ http-api.js        # 设置页的宿主 JSON API（/flowus/api/*，走连接信任栅栏）
+│  ├─ client.js          # 浏览器半：__ModuleLoader__ bundle，注册 Settings → FlowUs 页面
 │  ├─ login.js           # 两段式授权码流程编排
 │  ├─ oauth-provider.js  # SDK 的 OAuthClientProvider 实现 + token 摘要/过期判断
 │  ├─ callback-server.js # 一次性 loopback 回调监听

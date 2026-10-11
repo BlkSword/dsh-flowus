@@ -1,6 +1,6 @@
 # @mars-sea/dsh-flowus
 
-Use FlowUs from DeepSeek Harness (DSH): **browser-based OAuth 2.1 sign-in (PKCE + dynamic client registration)** against the official FlowUs MCP server, FlowUs tools registered as native agent tools, and a `/flowus` command for the human.
+Use FlowUs from DeepSeek Harness (DSH): **browser-based OAuth 2.1 sign-in (PKCE + dynamic client registration)** against the official FlowUs MCP server, FlowUs tools registered as native agent tools, a `/flowus` command for the human, and a **dedicated FlowUs page in the settings panel** for authorization and state.
 
 - Server URL: `https://mcp.flowus.cn/message` (no token in the URL, ever)
 - **No static token anywhere**: nothing to paste, no environment variable; the refresh token lives in a private state file and rotates automatically
@@ -22,7 +22,7 @@ npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
 dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
 ```
 
-`dsh plugin add` installs the package, sees its `dsh.bundle.patch`, and **appends `@mars-sea/dsh-flowus` to `dsh.profile.bundles` automatically**. Reload the profile (automatic with `dsh-hmr`, otherwise restart), then type `/flowus status` in the GUI.
+`dsh plugin add` installs the package, sees its `dsh.bundle.patch`, and **appends `@mars-sea/dsh-flowus` to `dsh.profile.bundles` automatically**. Then **restart `dsh web` and reload the browser page**: the client entry graph (`window.__DSH_BOOT__`) is composed at boot, and with the default `dsh-hmr` config (`root: []`) only explicit configuration watches are live, so adding a plugin does not hot-load into a running process. Afterwards type `/flowus status` in the GUI or open Settings → FlowUs.
 
 > **Windows note:** pnpm mis-resolves absolute `link:D:/...` / `file:D:/...` specs (it creates a junction to `...\profiles\web\D:\...`). Use the tarball + relative-path route above.
 
@@ -45,6 +45,21 @@ The plugin starts a one-shot loopback listener on `127.0.0.1:42813/callback`, op
 | `/flowus call <tool> [json]` | Call one tool directly, e.g. `/flowus call search_pages {"query":"weekly"}` |
 | `/flowus reload` | Reconnect and re-sync the tool list |
 | `/flowus help` | Usage |
+
+## Settings page (Settings → FlowUs)
+
+The plugin contributes one page to the settings panel through the `settings.section` slot (`id: flowus`):
+
+- **Status badge** — not authorized / waiting for the browser / authorized but not connected / connected (with the tool count), rendered with `StateDot` and `Tag`.
+- **Facts** — MCP endpoint, tool namespace, credential-file path, granted scope, expiry, whether a refresh token is stored, last sync time, last error.
+- **Actions** — `Sign in with FlowUs` (or `Re-authorize`), `Cancel` while waiting, `Reconnect`, `Sign out`, `Refresh`.
+- **Tools** — the `mcp__flowus__*` tools currently published to the model, with their one-line description.
+
+The page reads `GET /flowus/api/status` and posts to `/flowus/api/login`, `/flowus/api/login-cancel`, `/flowus/api/logout` and `/flowus/api/reload`. Every response is the **same status snapshot** (`{ ok, snapshot }`), so one render path covers every action.
+
+Those routes sit behind the same trust fence as every other DSH web surface (`ctx.connection.requestRejection`: Host/Origin check plus the login-token cookie) — an unauthenticated request gets 401 and can neither read state nor start a login.
+
+Sign-in is start-then-poll: `POST /flowus/api/login` returns immediately and runs the browser flow in the background (bounded by `loginTimeoutMs`), while the page refreshes its status every 1.5 s. No HTTP request is held open for minutes.
 
 ## Configuration
 
@@ -108,11 +123,11 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                                        # 80 offline tests
+npm test                                                        # 99 offline tests
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 3 live network smoke tests
 ```
 
-Coverage: tool-naming contract, `/flowus` grammar, state store (atomicity/serialization/corruption), OAuth provider semantics and invalidation scopes, loopback callback validation (state/code/error/port fallback/abort), shell-free browser launch, MCP JSON Schema → DSH parameter DSL plus the output contract checked with DSH's own schema compiler, a real cordis context load (registration, command surface, disposal), the **shipped** `ToolRuntime` / `CommandRuntime` / `SystemPrompt` services (the command really lands in the registry, the prompt section really survives assembly, a bridged tool really registers and runs the full execution pipeline including argument and output validation), and live discovery/PKCE/unauthorized-connect behaviour against FlowUs.
+Coverage: tool-naming contract, `/flowus` grammar, state store (atomicity/serialization/corruption), OAuth provider semantics and invalidation scopes, loopback callback validation (state/code/error/port fallback/abort), shell-free browser launch, MCP JSON Schema → DSH parameter DSL plus the output contract checked with DSH's own schema compiler, the settings-page host API (trust fence, method guard, envelope, error path), the browser bundle (registration contract, dictionary parity, `settings.section` registration, host-route path cross-check, view-model branches and one full render), a real cordis context load (registration, command surface, disposal), the **shipped** `ToolRuntime` / `CommandRuntime` / `SystemPrompt` services (the command really lands in the registry, the prompt section really survives assembly, a bridged tool really registers and runs the full execution pipeline including argument and output validation), and live discovery/PKCE/unauthorized-connect behaviour against FlowUs.
 
 After editing the source, redistribute with `npm pack` + `dsh plugin --profile web add "file:./..."`.
 
@@ -120,19 +135,21 @@ After editing the source, redistribute with `npm pack` + `dsh plugin --profile w
 
 | Symptom | Fix |
 | --- | --- |
-| `/flowus` is unknown | The plugin is not loaded: check `dsh.profile.bundles` contains `@mars-sea/dsh-flowus`, then reload/restart |
-| Authorized but no tools | `/flowus reload`, then read the error line in `/flowus status` |
+| `/flowus` is unknown | The plugin is not loaded: check `dsh.profile.bundles` contains `@mars-sea/dsh-flowus`, then **restart `dsh web`** |
+| No FlowUs page in Settings | Same cause: the client entry graph is composed at boot — restart `dsh web` and reload the page |
+| A button on the settings page answers 401 | Page requests need the login cookie: open the GUI from the `?token=...` URL that `dsh web` printed |
+| Authorized but no tools | `/flowus reload`, then read the error line in `/flowus status` or on the settings page |
 | Port 42813 busy | It falls back to an ephemeral port, which forces a fresh client registration; better: set a different fixed `callbackPort` |
-| Registration throttled (`too_many_requests`) | Wait, then `/flowus login` again — the plugin reuses an existing registration |
-| Browser did not open | The command prints the authorization URL; open it manually |
+| Registration throttled (`too_many_requests`) | Wait, then sign in again — the plugin reuses an existing registration |
+| Browser did not open | The command output and the settings page both show the authorization URL; open it manually |
 | Tool-name collision | Change `serverName` (e.g. `flowus2`) |
 
 ## Known limitations
 
 - Image/audio content blocks are not rendered inline (placeholder text instead); FlowUs tools are text/JSON oriented.
 - Tools that require the MCP task extension (`execution.taskSupport === "required"`) are skipped with a log line.
-- MCP resources and prompts are not registered — this plugin's scope is tools plus `/flowus`.
-- No client-side UI panel (unlike the commandcode provider's settings page): everything is in the `/flowus` command.
+- MCP resources and prompts are not registered — this plugin's scope is tools, `/flowus` and the settings page.
+- The settings page shows state and drives authorization/connection; it has no per-tool switches (visibility is bounded only by `maxTools` and the collision guard).
 - The first authorization needs a human in a browser; that is OAuth, not a gap.
 
 ## Layout
@@ -140,9 +157,15 @@ After editing the source, redistribute with `npm pack` + `dsh plugin --profile w
 ```
 dsh-flowus/
 ├─ cordis.patch.yml      # bundle layer: inserts the flowus plugin row + defaults
-├─ package.json          # dsh.bundle.patch, peers, publish whitelist
+├─ package.json          # dsh.bundle.patch, dsh.client, peers, publish whitelist
+├─ icon.svg
+├─ locale/               # display name and summary for the Plugins list (en/zh)
+│  ├─ en.json
+│  └─ zh.json
 ├─ lib/
-│  ├─ index.js           # plugin entry: Config, apply, tool publishing, /flowus, prompt section
+│  ├─ index.js           # plugin entry: Config, apply, tool publishing, /flowus, prompt section, page routes
+│  ├─ http-api.js        # host JSON API for the settings page (/flowus/api/*, behind the trust fence)
+│  ├─ client.js          # browser half: __ModuleLoader__ bundle registering Settings → FlowUs
 │  ├─ login.js           # two-leg authorization-code orchestration
 │  ├─ oauth-provider.js  # the SDK's OAuthClientProvider implementation
 │  ├─ callback-server.js # one-shot loopback redirect receiver
