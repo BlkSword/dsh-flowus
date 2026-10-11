@@ -129,6 +129,7 @@ dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
 - 运行时 401：SDK 自动用 refresh token 续期并重试一次；仍失败则报「需要 `/flowus login`」，不会静默失败。
 - 主动续期：插件记录了 token 的获取时间与有效期，连接前若已过期会先刷新，避免先撞 401。
 - 工具列表变化：MCP 的 `notifications/tools/list_changed` 会触发重新同步（整代替换，失败保留旧的一代）。
+- **一次一个工具调用**：FlowUs 服务端限制同一 MCP 会话同时只能有一个工具调用（并发会返回 JSON-RPC `-32002`）。插件在会话内做了串行队列，并对并发拒绝做有限次退避重试，所以模型并行发起多个只读调用不会失败（实测 5 个并发调用 5/5 成功）。
 - 命名冲突：若 `mcp__flowus__*` 已被别的插件占用，则本次同步整体拒绝，不会半发布。
 - 设置页：宿主半用 `ctx.webServer.register` 注册 `/flowus/api/*`，客户端半是 `window.__ModuleLoader__` classic script（`lib/client.js`，无需构建步骤），注册进 `settings.section` 槽位；两者通过 `fetch` + JSON 快照通信（没有自建 RPC 协议）。
 
@@ -141,7 +142,7 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # 离线测试（99 项）
+npm test                                            # 离线测试（109 项）
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟（3 项）
 ```
 
@@ -156,6 +157,7 @@ $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟�
 - `tests/tool-bridge.test.js` MCP JSON Schema → DSH 参数 DSL、输出契约（用 DSH 自己的 schema 编译器校验）
 - `tests/http-api.test.js` 设置页宿主 API：信任栅栏、方法守卫、`{ok, snapshot}` 封装、错误路径
 - `tests/client-bundle.test.js` 浏览器半：`__ModuleLoader__` 注册契约、中英文字典键一致性、`settings.section` 注册、与宿主路由的路径交叉校验、视图模型分支、一次完整渲染
+- `tests/mcp-session.test.js` 结果归一化（文本/图片/资源/结构化内容）、并发拒绝识别、串行队列（顺序、并发上限、失败不断链）、授权错误分类
 - `tests/plugin-apply.test.js` 真 cordis 上下文装载、命令面、释放
 - `tests/plugin-real-services.test.js` 装真实的 `ToolRuntime` / `CommandRuntime` / `SystemPrompt`：命令真的进了注册表、提示词段真的进了 assembly、桥接工具真的注册并跑完整执行管线（参数校验、输出契约校验、错误路径）
 - `tests/flowus-live.test.js` 真实端点发现、PKCE 授权 URL、未授权连接的错误映射

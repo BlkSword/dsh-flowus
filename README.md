@@ -114,6 +114,7 @@ Override as a profile patch layer (`$DSH_HOME/profiles/web/cordis.patch.yml`):
 - A 401 at runtime makes the SDK refresh once and retry; a still-unauthorized call reports "run `/flowus login`" instead of a raw transport error.
 - Tokens carry their issue time, so the plugin refreshes *before* connecting when the access token is already stale.
 - `notifications/tools/list_changed` triggers a whole-generation re-sync; a failed sync keeps the previous generation.
+- **One tool call at a time:** the FlowUs server allows a single in-flight call per MCP session (a second one gets JSON-RPC `-32002`). The session serializes calls and retries a concurrency rejection with bounded backoff, so the harness may schedule read-only tools in parallel without failures (measured: 5/5 concurrent calls succeeded).
 - If another plugin already owns an `mcp__flowus__*` name, the sync is refused as a whole rather than partially published.
 
 ## Development and tests
@@ -123,11 +124,11 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                                        # 99 offline tests
+npm test                                                        # 109 offline tests
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 3 live network smoke tests
 ```
 
-Coverage: tool-naming contract, `/flowus` grammar, state store (atomicity/serialization/corruption), OAuth provider semantics and invalidation scopes, loopback callback validation (state/code/error/port fallback/abort), shell-free browser launch, MCP JSON Schema → DSH parameter DSL plus the output contract checked with DSH's own schema compiler, the settings-page host API (trust fence, method guard, envelope, error path), the browser bundle (registration contract, dictionary parity, `settings.section` registration, host-route path cross-check, view-model branches and one full render), a real cordis context load (registration, command surface, disposal), the **shipped** `ToolRuntime` / `CommandRuntime` / `SystemPrompt` services (the command really lands in the registry, the prompt section really survives assembly, a bridged tool really registers and runs the full execution pipeline including argument and output validation), and live discovery/PKCE/unauthorized-connect behaviour against FlowUs.
+Coverage: tool-naming contract, `/flowus` grammar, state store (atomicity/serialization/corruption), OAuth provider semantics and invalidation scopes, loopback callback validation (state/code/error/port fallback/abort), shell-free browser launch, MCP JSON Schema → DSH parameter DSL plus the output contract checked with DSH's own schema compiler, MCP result normalization with the concurrency lane that keeps the server's one-call-at-a-time rule, the settings-page host API (trust fence, method guard, envelope, error path), the browser bundle (registration contract, dictionary parity, `settings.section` registration, host-route path cross-check, view-model branches and one full render), a real cordis context load (registration, command surface, disposal), the **shipped** `ToolRuntime` / `CommandRuntime` / `SystemPrompt` services (the command really lands in the registry, the prompt section really survives assembly, a bridged tool really registers and runs the full execution pipeline including argument and output validation), and live discovery/PKCE/unauthorized-connect behaviour against FlowUs.
 
 After editing the source, redistribute with `npm pack` + `dsh plugin --profile web add "file:./..."`.
 
