@@ -40,6 +40,16 @@ dsh plugin --profile web add @blksword/dsh-flowus@0.1.0
 
 装进任何 profile 都是同样的规则。
 
+### 直接从 GitHub 安装（不需要 registry，也不需要 npm 账号）
+
+仓库是公开的，所以同一个包可以直接从 git 安装——这条路径既不需要 npm 账号，也没有 2FA：
+
+```powershell
+dsh plugin --profile web add github:BlkSword/dsh-flowus
+```
+
+端到端已验证：pnpm 能解析 git 依赖、bundle 自动写入 `dsh.profile.bundles`、loader 能正确组合并导入插件行（`dsh --profile <名字> --dump-config` 与 `--dump-config-schema` 都通过）。需要可复现的话用 `github:BlkSword/dsh-flowus#<commit-sha>` 钉住提交；之后 `dsh plugin --profile web update @blksword/dsh-flowus` 可拉取新提交。
+
 ### 不用 registry，从本地检出安装
 
 ```powershell

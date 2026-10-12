@@ -34,6 +34,16 @@ dsh plugin --profile web add @blksword/dsh-flowus@0.1.0
 
 The same applies to every profile you install into.
 
+### Installing from GitHub (no registry, no npm account)
+
+The repository is public, so the very same package installs straight from git — the path that needs neither an npm account nor 2FA:
+
+```powershell
+dsh plugin --profile web add github:BlkSword/dsh-flowus
+```
+
+Verified end to end: pnpm resolves the git dependency, the bundle is appended to `dsh.profile.bundles`, and the loader composes and imports the plugin row (`dsh --profile <name> --dump-config` and `--dump-config-schema`). Pin a commit for reproducibility with `github:BlkSword/dsh-flowus#<sha>`; a later `dsh plugin --profile web update @blksword/dsh-flowus` picks up new commits.
+
 ### Installing from a checkout instead of the registry
 
 ```powershell
