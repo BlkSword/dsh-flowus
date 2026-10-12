@@ -2,112 +2,131 @@
 
 English | [中文](./README.md)
 
-Use FlowUs from DeepSeek Harness (DSH): **browser-based OAuth 2.1 sign-in (PKCE + dynamic client registration)** against the official FlowUs MCP server, FlowUs tools registered as native agent tools, a `/flowus` command for the human, and a **dedicated FlowUs page in the settings panel** for authorization and state.
+A FlowUs integration plugin for DeepSeek Harness (DSH). The plugin performs OAuth 2.1 authorization against the official FlowUs MCP server (`https://mcp.flowus.cn/message`) entirely within the host process — RFC 9728 metadata discovery, RFC 7591 dynamic client registration and PKCE S256 — registers the tools published by that server as native agent tools, and provides a `/flowus` command together with a settings-panel page. The authorization flow does not use a static token.
 
-- Server URL: `https://mcp.flowus.cn/message` (no token in the URL, ever)
-- **No static token anywhere**: nothing to paste, no environment variable; the refresh token lives in a private state file and rotates automatically
-- Tool names match the stock DSH MCP bridge: `mcp__flowus__<rawToolName>`
+## Scope
 
-## Why this plugin exists
+- **Browser authorization.** An OAuth 2.1 authorization-code flow against the official FlowUs MCP server, with a loopback callback listener on `127.0.0.1`. Access and refresh tokens are stored in a plugin-private state file and renewed automatically.
+- **Native tools.** Every tool published by the FlowUs MCP server is registered with the DSH tool registry under the same naming convention as the stock MCP bridge, namely `mcp__flowus__<tool>`.
+- **`/flowus` command.** Status reporting, authorization, sign-out, tool listing, direct invocation, reconnection and help.
+- **Settings page.** A dedicated FlowUs page in the settings panel that reports authorization and connection state and performs authorization, reconnection and sign-out operations.
+- **System-prompt section.** The server instructions and the current tool catalogue are contributed to the system prompt, with explicit guidance when the workspace is not yet authorized.
 
-DSH ships `@deepseek-ai/dsh-mcp-client`, which supports `stdio` and `streamable-http` with static `headers` — but **not MCP OAuth**. FlowUs's official MCP endpoint uses OAuth 2.1 (RFC 9728 discovery, RFC 7591 dynamic client registration, PKCE S256) and explicitly asks clients not to fall back to a static token. This plugin fills that gap: it runs the OAuth client itself inside the host process and bridges the discovered tools onto `ctx.tools`.
+## Background
 
-## Install
+The DSH package `@deepseek-ai/dsh-mcp-client` supports `stdio` and `streamable-http` with static request headers, but not MCP OAuth. The official FlowUs MCP server uses OAuth 2.1 and requires a client that cannot complete the authorization flow to report that condition rather than fall back to a static token. This plugin implements the OAuth client flow and bridges the discovered tools onto `ctx.tools`.
 
-This release supports dsh 0.2.0-rc.2, dsh 0.2.1-alpha.1 and dsh 0.2.1-alpha.2, and nothing else — the plugin's peer range is exactly those three verified versions, and its compatibility records name them alone. 0.2.0-rc.2 is what `npm i -g @deepseek-ai/dsh@latest` and the official desktop build ship, so it is the version most users are on; 0.2.1-alpha.2 is the upstream alpha channel today, and 0.2.1-alpha.1 stays in the range because it was already verified, so a profile pinned to it keeps working:
+## Requirements
+
+| Item | Requirement |
+| --- | --- |
+| DSH | `0.2.0-rc.2`, `0.2.1-alpha.1` or `0.2.1-alpha.2` (see Compatibility) |
+| Node.js | `>= 22` |
+
+## Installation
+
+### From npm
 
 ```powershell
 dsh plugin --profile web add @blksword/dsh-flowus@latest
 ```
 
-Every `@deepseek-ai/dsh-*` package the plugin touches is declared as a Host peer, so the active dsh profile remains their owner — never add a separate dependency for one. The `@deepseek-ai/dsh-*` peers share one exact-version disjunction; `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` carry the paired ranges `~4.0.4 || ~4.0.5-alpha.1` and `~3.18.4 || ~3.18.5-alpha.1` instead, because those are the versions each runtime ships alongside.
+`dsh plugin add` performs the following steps:
 
-The matrix is measured, not assumed: the offline suite (109 tests) and the live network smoke tests (3) were run against each runtime's own shipped packages — 0.2.0-rc.2, 0.2.1-alpha.1 and 0.2.1-alpha.2 — with zero failures, and the named-export sets the plugin touches are identical across all three. The alpha OR-clauses are required rather than cosmetic: a prerelease only satisfies a range when a comparator carries a prerelease on the same `major.minor.patch`, so `~4.0.4` alone does not accept `4.0.5-alpha.1`, nor `0.2.0-rc.2` accept `0.2.1-alpha.1`.
+1. installs the package through pnpm;
+2. reads the `dsh.bundle.patch` declaration in the package and appends `@blksword/dsh-flowus` to `dsh.profile.bundles`, so no manual edit of `package.json` is required;
+3. resolves the `@deepseek-ai/*` implementations provided by the DSH installation through peer dependencies.
 
-`dsh plugin add` installs the package, sees its `dsh.bundle.patch`, and **appends `@blksword/dsh-flowus` to `dsh.profile.bundles` automatically**. Then **restart `dsh web` and reload the browser page**: the client entry graph (`window.__DSH_BOOT__`) is composed at boot, and with the default `dsh-hmr` config (`root: []`) only explicit configuration watches are live, so adding a plugin does not hot-load into a running process. Afterwards type `/flowus status` in the GUI or open Settings → FlowUs.
-
-**pnpm 11 holds back new releases.** Its `minimumReleaseAge` defaults to 1440 minutes, so a version published less than a day ago is skipped and `@latest` resolves to the previous release — silently, with a success exit code. To install a release from the last 24 hours, name it exactly:
+pnpm 11 applies `minimumReleaseAge`, which defaults to 1440 minutes: a version published less than 24 hours ago is skipped when `@latest` is resolved, the resolution falls back to the previous version, and the exit code still reports success. To install a recent release, name the exact version:
 
 ```powershell
 dsh plugin --profile web add @blksword/dsh-flowus@0.1.0
 ```
 
-The same applies to every profile you install into.
+### From GitHub
 
-### Installing from GitHub (no registry, no npm account)
-
-The repository is public, so the very same package installs straight from git — the path that needs neither an npm account nor 2FA:
+The repository is public, so the same package can be installed without a registry:
 
 ```powershell
 dsh plugin --profile web add github:BlkSword/dsh-flowus
 ```
 
-Verified end to end: pnpm resolves the git dependency, the bundle is appended to `dsh.profile.bundles`, and the loader composes and imports the plugin row (`dsh --profile <name> --dump-config` and `--dump-config-schema`). Pin a commit for reproducibility with `github:BlkSword/dsh-flowus#<sha>`; a later `dsh plugin --profile web update @blksword/dsh-flowus` picks up new commits.
+This path has been verified end to end: pnpm resolves the git dependency, the bundle entry is written to `dsh.profile.bundles`, and the loader composes and imports the plugin row (`dsh --profile <name> --dump-config` and `--dump-config-schema` both succeed). For a reproducible installation, pin a commit with `github:BlkSword/dsh-flowus#<commit-sha>`; subsequent updates are retrieved with `dsh plugin --profile web update @blksword/dsh-flowus`.
 
-### Installing from a checkout instead of the registry
+### From a local checkout
 
 ```powershell
-# 1. Pack (from this package directory)
+# 1. Pack into the profile directory
 npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
 
-# 2. Install (cwd is the profile directory, hence the relative spec)
+# 2. Install from the profile directory (relative specifier)
 dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
 ```
 
-> **Windows note:** pnpm mis-resolves absolute `link:D:/...` / `file:D:/...` specs (it creates a junction to `...\profiles\web\D:\...`). Pack the tarball into the profile directory and use the relative `file:` spec above.
+> Windows note: pnpm interprets absolute `link:D:/...` and `file:D:/...` specifiers as relative paths and creates an invalid link pointing at `...\profiles\web\D:\...`. Pack the tarball into the profile directory first, then use the relative `file:` specifier shown above.
 
-## Releasing (maintainers)
+### After installation
 
-```powershell
-npm login                      # once per machine; the scope @blksword must belong to the account
-npm publish --access public    # prepublishOnly runs the offline suite first
-npm view @blksword/dsh-flowus version
+Restart `dsh web` and reload the browser page. The client entry graph (`window.__DSH_BOOT__`) is composed at process start, and with the default `dsh-hmr` configuration (`root: []`) only explicit configuration watches remain active, so a newly added plugin is not hot-loaded into a running process. Confirm the result with `/flowus status` or through Settings → FlowUs.
 
-# End-to-end check of the published artifact:
-dsh plugin --profile web remove @blksword/dsh-flowus
-dsh plugin --profile web add @blksword/dsh-flowus@latest
-```
+## Compatibility
 
-`dsh plugin add` is the only supported install path: the loader resolves the package from the profile's `node_modules`, and the client half is served from the package's `exports["./client"]`.
+This release supports DSH `0.2.0-rc.2`, `0.2.1-alpha.1` and `0.2.1-alpha.2`, and no other versions. The peer dependencies and the compatibility record name exactly those three releases.
 
-## First sign-in
+| DSH release | `@deepseek-ai/cordis` | `@deepseek-ai/schemastery` |
+| --- | --- | --- |
+| `0.2.0-rc.2` | `~4.0.4` | `~3.18.4` |
+| `0.2.1-alpha.1` | `~4.0.5-alpha.1` | `~3.18.5-alpha.1` |
+| `0.2.1-alpha.2` | `~4.0.5-alpha.1` | `~3.18.5-alpha.1` |
+
+The `@deepseek-ai/dsh-*` peer dependencies use one exact-version disjunction, `0.2.0-rc.2 || 0.2.1-alpha.1 || 0.2.1-alpha.2`, while `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` use the paired ranges `~4.0.4 || ~4.0.5-alpha.1` and `~3.18.4 || ~3.18.5-alpha.1`. Every `@deepseek-ai/*` package is provided by the active dsh profile and must not be added as a separate dependency.
+
+The matrix above was established by measurement: the offline suite and the live smoke tests were executed against the packages shipped by each of the three runtimes, with no failures, and the named-export sets used by the plugin are identical across all three. The alpha range clauses are required rather than cosmetic: a prerelease version satisfies a range only when a comparator carries a prerelease identifier on the same `major.minor.patch`, so `~4.0.4` does not accept `4.0.5-alpha.1`, and `0.2.0-rc.2` does not accept `0.2.1-alpha.1`.
+
+## First authorization
 
 ```
 /flowus login
 ```
 
-The plugin starts a one-shot loopback listener on `127.0.0.1:42813/callback`, opens your browser on the FlowUs authorization page (printing the URL when it cannot), validates the `state` on the redirect, exchanges the code with PKCE, then connects, discovers and registers the tools. Afterwards just ask the agent for FlowUs work in plain language.
+1. The plugin opens a one-shot callback listener on `127.0.0.1:42813/callback`.
+2. The default browser is opened on the FlowUs authorization page. If it cannot be opened automatically, the full authorization URL is printed by the command and shown on the settings page.
+3. After the user approves the request, the browser is redirected to the callback address.
+4. The plugin exchanges the authorization code together with the PKCE verifier for a token set, then connects to the MCP server, discovers the tools and registers them.
+5. The command reports the number of registered tools.
+
+Once authorization has completed, FlowUs tasks can be requested from the agent in plain language.
 
 ## Commands
 
 | Command | Effect |
 | --- | --- |
-| `/flowus` (`/flowus status`) | Authorization, connection, state-file path, registered tools |
-| `/flowus login` | Browser authorization + tool sync |
-| `/flowus logout` | Delete tokens (keeps the client registration to avoid the registration rate limit) |
-| `/flowus tools` | List the tools visible to the model |
-| `/flowus call <tool> [json]` | Call one tool directly, e.g. `/flowus call search_pages {"query":"weekly"}` |
-| `/flowus reload` | Reconnect and re-sync the tool list |
+| `/flowus` or `/flowus status` | Authorization state, connection state, credential-file path and the registered tool list |
+| `/flowus login` | Browser authorization followed by a tool synchronization |
+| `/flowus logout` | Deletes the tokens while keeping the dynamic client registration, which avoids the registration rate limit |
+| `/flowus tools` | Lists the FlowUs tools registered for the model |
+| `/flowus call <tool> [json]` | Invokes one tool directly, for example `/flowus call search_pages {"query":"weekly report"}` |
+| `/flowus reload` | Reconnects and re-synchronizes the tool list |
 | `/flowus help` | Usage |
 
-## Settings page (Settings → FlowUs)
+## Settings page
 
-The plugin contributes one page to the settings panel through the `settings.section` slot (`id: flowus`):
+The plugin contributes a dedicated page to the settings panel through the `settings.section` slot (`id: flowus`). The page reports state and performs the authorization-related operations:
 
-- **Status badge** — not authorized / waiting for the browser / authorized but not connected / connected (with the tool count), rendered with `StateDot` and `Tag`.
-- **Facts** — MCP endpoint, tool namespace, credential-file path, granted scope, expiry, whether a refresh token is stored, last sync time, last error.
-- **Actions** — `Sign in with FlowUs` (or `Re-authorize`), `Cancel` while waiting, `Reconnect`, `Sign out`, `Refresh`.
-- **Tools** — the `mcp__flowus__*` tools currently published to the model, with their one-line description.
+- **State indicator.** Not authorized, waiting for the browser, authorized but not connected, or connected (with the tool count), rendered with `StateDot` and `Tag`.
+- **State details.** MCP endpoint, tool namespace, credential-file path, granted scope, token expiry, whether a refresh token is stored, last synchronization time and the most recent error.
+- **Actions.** Sign in (when unauthorized), re-authorize (when authorized), cancel (while an authorization is in progress), reconnect, sign out and refresh.
+- **Tool list.** The `mcp__flowus__*` tools currently registered for the model, with their short descriptions.
 
-The page reads `GET /flowus/api/status` and posts to `/flowus/api/login`, `/flowus/api/login-cancel`, `/flowus/api/logout` and `/flowus/api/reload`. Every response is the **same status snapshot** (`{ ok, snapshot }`), so one render path covers every action.
+Page data is read from the host route `GET /flowus/api/status`; the buttons post to `/flowus/api/login`, `/flowus/api/login-cancel`, `/flowus/api/logout` and `/flowus/api/reload` respectively. Every response carries the same status snapshot (`{ ok, snapshot }`), so a single rendering path covers all operations.
 
-Those routes sit behind the same trust fence as every other DSH web surface (`ctx.connection.requestRejection`: Host/Origin check plus the login-token cookie) — an unauthenticated request gets 401 and can neither read state nor start a login.
+These routes behave like every other DSH web surface: each request first passes the connection service's trust fence (Host/Origin validation and the login-token cookie). An unauthenticated request receives 401 and can neither read state nor start an authorization.
 
-Sign-in is start-then-poll: `POST /flowus/api/login` returns immediately and runs the browser flow in the background (bounded by `loginTimeoutMs`), while the page refreshes its status every 1.5 s. No HTTP request is held open for minutes.
+Authorization uses a start-then-poll pattern: `POST /flowus/api/login` returns immediately while the browser flow runs in the background, bounded by `loginTimeoutMs`; the page refreshes its status every 1.5 seconds while waiting, so no HTTP request is held open for an extended period.
 
 ## Configuration
 
-Override as a profile patch layer (`$DSH_HOME/profiles/web/cordis.patch.yml`):
+Configuration is supplied by a profile patch layer (`$DSH_HOME/profiles/web/cordis.patch.yml`):
 
 ```yaml
 - id: flowus
@@ -118,120 +137,162 @@ Override as a profile patch layer (`$DSH_HOME/profiles/web/cordis.patch.yml`):
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `serverUrl` | `https://mcp.flowus.cn/message` | MCP resource URL |
+| `serverUrl` | `https://mcp.flowus.cn/message` | FlowUs MCP resource URL |
 | `serverName` | `flowus` | Tool namespace (`mcp__<serverName>__*`) |
-| `scope` | `all` | Requested OAuth scope |
+| `scope` | `all` | Requested OAuth scope (FlowUs publishes `all`) |
 | `autoConnect` | `true` | Connect and publish tools at startup when a usable token exists |
-| `failOnStartupError` | `false` | Reject plugin activation on initial failure |
-| `statePath` | `''` → `<DSH_HOME>/flowus/oauth.json` | Private credential/registration file |
-| `clientName` | `DeepSeek Harness` | `client_name` on the authorization page |
-| `callbackHost` | `127.0.0.1` | Loopback host |
-| `callbackPort` | `42813` | Loopback port (stable ⇒ one reusable registration) |
-| `callbackPath` | `/callback` | Loopback path |
-| `loginTimeoutMs` | `300000` | Browser wait budget for `/flowus login` |
-| `openBrowser` | `true` | Launch the default browser automatically |
-| `toolCallTimeoutMs` | `60000` | Per-call timeout |
-| `maxTools` | `128` | Published-tool cap (`0` disables) |
-| `promptSection` | `true` | Add FlowUs guidance + server instructions to the system prompt |
+| `failOnStartupError` | `false` | Whether a failed initial connection or tool synchronization fails plugin activation |
+| `statePath` | empty → `<DSH_HOME>/flowus/oauth.json` | Credential and registration state file |
+| `clientName` | `DeepSeek Harness` | Client name shown on the authorization page |
+| `callbackHost` | `127.0.0.1` | Callback listener host |
+| `callbackPort` | `42813` | Callback port; a fixed port allows one client registration to be reused |
+| `callbackPath` | `/callback` | Callback path |
+| `loginTimeoutMs` | `300000` | Upper bound for waiting on the browser |
+| `openBrowser` | `true` | Whether to open the default browser automatically |
+| `toolCallTimeoutMs` | `60000` | Timeout for a single tool call |
+| `maxTools` | `128` | Upper bound on published tools (`0` disables the bound) |
+| `promptSection` | `true` | Whether to contribute the FlowUs guidance and server instructions to the system prompt |
 
-## Credentials and safety
+## Credentials and security
 
-- State file: `%DSH_HOME%\flowus\oauth.json` (default `C:\Users\<you>\.dsh\flowus\oauth.json`) — dynamic `client_id`, token set, PKCE verifier and discovery cache. Writes are atomic (temp file + rename) with `0600` where the platform honors it.
-- **Public client**: `token_endpoint_auth_method: "none"` + PKCE S256, no client secret; the refresh token is the only long-lived credential.
-- `logout` drops tokens and the verifier but **keeps the dynamic registration** — the registration endpoint is tightly rate-limited (observed `X-RateLimit-Limit: 3`), so reusing it keeps a later login from being throttled.
-- Endpoints: `mcp.flowus.cn` (resource metadata + MCP data plane), `api.flowus.cn` (authorize / token / register).
+- The state file is located at `%DSH_HOME%\flowus\oauth.json` (by default `C:\Users\<user>\.dsh\flowus\oauth.json`) and contains the dynamically registered `client_id`, the token set, the PKCE verifier and the discovery cache. Writes use atomic replacement (temporary file followed by rename) and set permissions to `0600` where the platform supports it.
+- The client is a public client: `token_endpoint_auth_method = "none"` together with PKCE S256, and no client secret exists. The refresh token is the only long-lived credential.
+- `logout` removes the tokens and the verifier while retaining the dynamic client registration. The registration endpoint is rate-limited (an observed `X-RateLimit-Limit` of 3), so reusing the registration avoids throttling on subsequent sign-ins.
+- Network endpoints in use: `mcp.flowus.cn` (resource metadata and the MCP data plane) and `api.flowus.cn` (authorization, token and registration).
+- To revoke access, revoke the application authorization on the FlowUs side and then run `/flowus logout` locally.
 
-## How it works
+## Implementation
 
 ```
 /flowus login
-  ├─ loopback listener on 127.0.0.1:42813/callback (state generated first)
-  ├─ auth(provider, {serverUrl, scope})
-  │    ├─ RFC 9728 discovery, RFC 8414 metadata
-  │    ├─ RFC 7591 dynamic registration when nothing is stored
-  │    └─ PKCE(S256) URL → redirectToAuthorization → browser
-  ├─ browser approval → redirect carries ?code&state (state mismatch is rejected)
-  ├─ auth(provider, {serverUrl, authorizationCode, iss}) → token exchange → persisted
-  └─ MCP initialize → tools/list → registered as mcp__flowus__* on ctx.tools
+  ├─ open a one-shot listener on 127.0.0.1:42813/callback (state generated first)
+  ├─ auth(provider, { serverUrl, scope })          ← driven by the MCP SDK
+  │    ├─ RFC 9728 discovery  /.well-known/oauth-protected-resource
+  │    ├─ RFC 8414 discovery  /.well-known/oauth-authorization-server
+  │    ├─ RFC 7591 dynamic client registration when nothing is stored
+  │    │  (loopback redirect, native application type)
+  │    └─ build the PKCE(S256) authorization URL → redirectToAuthorization → browser
+  ├─ browser approval → redirect carries ?code&state (a state mismatch is rejected)
+  ├─ auth(provider, { serverUrl, authorizationCode, iss })
+  │    └─ exchange for the token set (access + refresh) and persist it
+  └─ MCP initialize → tools/list → register each tool with DSH (mcp__flowus__*)
 ```
 
-- A 401 at runtime makes the SDK refresh once and retry; a still-unauthorized call reports "run `/flowus login`" instead of a raw transport error.
-- Tokens carry their issue time, so the plugin refreshes *before* connecting when the access token is already stale.
-- `notifications/tools/list_changed` triggers a whole-generation re-sync; a failed sync keeps the previous generation.
-- **One tool call at a time:** the FlowUs server allows a single in-flight call per MCP session (a second one gets JSON-RPC `-32002`). The session serializes calls and retries a concurrency rejection with bounded backoff, so the harness may schedule read-only tools in parallel without failures (measured: 5/5 concurrent calls succeeded).
-- If another plugin already owns an `mcp__flowus__*` name, the sync is refused as a whole rather than partially published.
+- **Token renewal.** On a runtime 401 the SDK refreshes the token with the stored refresh token and retries once; if the retry still fails, the plugin reports an explicit "re-authorization required" error. The plugin records the acquisition time and lifetime of the token set and refreshes before connecting when the access token is already stale, so the first request does not have to fail with 401.
+- **Tool-list changes.** `notifications/tools/list_changed` triggers a re-synchronization. Synchronization replaces the whole generation, and a failed synchronization keeps the previous generation in place.
+- **Serialized invocation.** The FlowUs server permits only one in-flight tool call per MCP session; a concurrent call is answered with JSON-RPC `-32002`. The plugin therefore executes calls through a single serial queue and additionally retries a concurrency rejection with bounded backoff, so parallel read-only scheduling by the model does not fail (measured: five concurrent calls, all successful).
+- **Naming conflicts.** If an `mcp__flowus__*` name is already owned by another plugin, the entire synchronization is refused and no partial generation is published.
+- **Settings page.** The host half registers `/flowus/api/*` through `ctx.webServer.register`; the client half is a `window.__ModuleLoader__` classic script (`lib/client.js`, with no build step) registered into the `settings.section` slot. The two halves communicate through `fetch` and JSON snapshots; no custom RPC protocol is introduced.
 
-## Development and tests
+## Development and testing
+
+Local development requires the following two prerequisites (`node_modules` is not tracked):
 
 ```powershell
 npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @modelcontextprotocol/client@2.0.0
+# Let node --test load the real dsh-tools / schemastery: point the junction at the DSH installation
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                                        # 109 offline tests
-$env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 3 live network smoke tests
+npm test                                            # offline suite: 112 tests, 109 passed, 3 live tests skipped
+$env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # live smoke tests: 3
 ```
 
-Coverage: tool-naming contract, `/flowus` grammar, state store (atomicity/serialization/corruption), OAuth provider semantics and invalidation scopes, loopback callback validation (state/code/error/port fallback/abort), shell-free browser launch, MCP JSON Schema → DSH parameter DSL plus the output contract checked with DSH's own schema compiler, MCP result normalization with the concurrency lane that keeps the server's one-call-at-a-time rule, the settings-page host API (trust fence, method guard, envelope, error path), the browser bundle (registration contract, dictionary parity, `settings.section` registration, host-route path cross-check, view-model branches and one full render), a real cordis context load (registration, command surface, disposal), the **shipped** `ToolRuntime` / `CommandRuntime` / `SystemPrompt` services (the command really lands in the registry, the prompt section really survives assembly, a bridged tool really registers and runs the full execution pipeline including argument and output validation), and live discovery/PKCE/unauthorized-connect behaviour against FlowUs.
+Test coverage:
 
-After editing the source, redistribute with `npm pack` + `dsh plugin --profile web add "file:./..."`.
+| File | Coverage |
+| --- | --- |
+| `tests/tool-names.test.js` | Tool-naming contract (identical to the stock MCP bridge) |
+| `tests/command-grammar.test.js` | `/flowus` grammar |
+| `tests/store.test.js` | Atomic writes, serialization and corruption handling for the state file |
+| `tests/oauth-provider.test.js` | `OAuthClientProvider` semantics and state invalidation scopes |
+| `tests/callback-server.test.js` | Callback validation (state, code, error, port fallback, abort) |
+| `tests/browser.test.js` | Shell-free browser launch and candidate fallback |
+| `tests/tool-bridge.test.js` | MCP JSON Schema to DSH parameter DSL, plus the output contract checked with DSH's own schema compiler |
+| `tests/http-api.test.js` | Settings-page host API: trust fence, method guard, `{ ok, snapshot }` envelope, error path |
+| `tests/client-bundle.test.js` | Browser half: `__ModuleLoader__` registration contract, dictionary key parity, slot registration, host-route path cross-check, view-model branches and one full render |
+| `tests/mcp-session.test.js` | Result normalization, concurrency-rejection detection, the serial queue (ordering, concurrency bound, failure isolation) and authorization-error classification |
+| `tests/plugin-apply.test.js` | Activation in a real cordis context, the command surface and disposal |
+| `tests/plugin-real-services.test.js` | Activation against the shipped `ToolRuntime`, `CommandRuntime` and `SystemPrompt`: command registration, prompt-section assembly, tool registration and the full execution pipeline (argument validation, output contract, error path) |
+| `tests/flowus-live.test.js` | Metadata discovery against the live endpoint, the PKCE authorization URL and the error mapping for an unauthorized connection |
+
+Distribution from a modified checkout:
+
+```powershell
+npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
+dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
+```
+
+Formal publication is described under Releasing.
 
 ### Verifying against another runtime
 
-The suite resolves `@deepseek-ai/*` through the `node_modules\@deepseek-ai` junction, so verifying a different release is a matter of pointing that junction at that release's package directory and re-running `node --test` (and the live smoke tests) on a copy of the repository. Two things differ between releases and are worth knowing:
+The suite resolves `@deepseek-ai/*` through the `node_modules\@deepseek-ai` junction. To verify a different runtime, point that junction at the target release's package directory and re-run `node --test` and the live smoke tests from a copy of the repository. Two differences between releases are relevant:
 
-- **Dependency layout.** `0.2.0-rc.2` nests its dependencies at `<dsh>\node_modules\@deepseek-ai\...`, while `0.2.1-alpha.1` and `0.2.1-alpha.2` **hoist** them to `<runtime>\node_modules\@deepseek-ai\...` (there is no nested directory at all). Tooling that assumes the rc.2 shape needs a fallback.
-- **`./invariant` subpaths are gone.** `@deepseek-ai/dsh-tools/invariant`, `dsh-commands/invariant` and `dsh-system-prompt/invariant` (and their `lib/invariant.js` files) exist in `0.2.0-rc.2` and were removed in `0.2.1-alpha.1`. This plugin imports package roots only — do not add a deep import there.
+- **Dependency layout.** `0.2.0-rc.2` nests its dependencies under `<dsh>\node_modules\@deepseek-ai\...`, whereas `0.2.1-alpha.1` and `0.2.1-alpha.2` hoist them to `<runtime>\node_modules\@deepseek-ai\...`, with no nested directory. Tooling that assumes the rc.2 layout requires a fallback.
+- **`./invariant` subpaths were removed.** `@deepseek-ai/dsh-tools/invariant`, `dsh-commands/invariant` and `dsh-system-prompt/invariant` (and their `lib/invariant.js` files) exist in `0.2.0-rc.2` and were removed in `0.2.1-alpha.1`. This plugin imports package roots only; such deep imports must not be added.
 
-Verified matrix (all three releases, offline suite + live smoke tests, zero failures): `0.2.0-rc.2`, `0.2.1-alpha.1`, `0.2.1-alpha.2`.
+## Releasing
+
+```powershell
+npm login                      # once per machine; the @blksword scope must belong to the account
+npm publish --access public    # prepublishOnly runs the offline suite first
+npm view @blksword/dsh-flowus version
+
+# End-to-end check of the published artifact
+dsh plugin --profile web remove @blksword/dsh-flowus
+dsh plugin --profile web add @blksword/dsh-flowus@latest
+```
+
+`dsh plugin add` is the only supported installation path: the loader resolves the package from the profile's `node_modules`, and the client half is served from the package's `exports["./client"]`.
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Symptom | Resolution |
 | --- | --- |
-| `/flowus` is unknown | The plugin is not loaded: check `dsh.profile.bundles` contains `@blksword/dsh-flowus`, then **restart `dsh web`** |
-| No FlowUs page in Settings | Same cause: the client entry graph is composed at boot — restart `dsh web` and reload the page |
-| A button on the settings page answers 401 | Page requests need the login cookie: open the GUI from the `?token=...` URL that `dsh web` printed |
-| Authorized but no tools | `/flowus reload`, then read the error line in `/flowus status` or on the settings page |
-| Port 42813 busy | It falls back to an ephemeral port, which forces a fresh client registration; better: set a different fixed `callbackPort` |
-| Registration throttled (`too_many_requests`) | Wait, then sign in again — the plugin reuses an existing registration |
-| Browser did not open | The command output and the settings page both show the authorization URL; open it manually |
-| Tool-name collision | Change `serverName` (e.g. `flowus2`) |
+| The `/flowus` command is unknown | The plugin is not loaded. Verify that `dsh.profile.bundles` contains `@blksword/dsh-flowus`, then restart `dsh web` |
+| No FlowUs page in the settings panel | Same cause: the client entry graph is composed at process start. Restart `dsh web` and reload the browser page |
+| A settings-page action returns 401 | Page requests require the login cookie. Open the GUI from the `?token=` URL printed by `dsh web` |
+| No tools after authorization | Run `/flowus reload`, then inspect the error line in `/flowus status` or on the settings page |
+| Port 42813 is in use | The plugin falls back to an ephemeral port, which requires a new client registration and may reach the registration rate limit. Configure a different fixed `callbackPort` |
+| Registration throttled (`too_many_requests`) | Retry the authorization later. The plugin reuses an existing registration, so registration is normally required only once |
+| The browser did not open | The authorization URL is printed by the command and displayed on the settings page and can be opened manually |
+| Tool-name conflict | Change `serverName` (for example to `flowus2`); the tool namespace changes accordingly |
 
 ## Known limitations
 
-- Image/audio content blocks are not rendered inline (placeholder text instead); FlowUs tools are text/JSON oriented.
-- Tools that require the MCP task extension (`execution.taskSupport === "required"`) are skipped with a log line.
-- MCP resources and prompts are not registered — this plugin's scope is tools, `/flowus` and the settings page.
-- The settings page shows state and drives authorization/connection; it has no per-tool switches (visibility is bounded only by `maxTools` and the collision guard).
-- The first authorization needs a human in a browser; that is OAuth, not a gap.
+- Image and audio content blocks are not rendered inline; they are presented as placeholder text. FlowUs tools are predominantly text- and JSON-oriented.
+- The MCP task extension is not supported: tools declaring `execution.taskSupport === "required"` are skipped and the reason is logged.
+- MCP resources and prompts are not registered; the scope of this plugin is tools, the command and the settings page.
+- The settings page provides state reporting and authorization/connection operations only. There is no per-tool enable switch; tool visibility is currently bounded only by `maxTools` and the naming-conflict guard.
+- The first authorization must be confirmed by a user in a browser, which is inherent to the OAuth authorization-code flow.
 
-## Layout
+## Repository layout
 
 ```
 dsh-flowus/
-├─ cordis.patch.yml      # bundle layer: inserts the flowus plugin row + defaults
-├─ package.json          # dsh.bundle.patch, dsh.client, peers, publish whitelist
+├─ cordis.patch.yml      # bundle layer: inserts the flowus plugin row and defaults
+├─ package.json          # dsh.bundle.patch, dsh.client, peer dependencies, publish whitelist
 ├─ icon.svg
-├─ locale/               # display name and summary for the Plugins list (en/zh)
+├─ locale/               # display name and summary for the plugin list (en/zh)
 │  ├─ en.json
 │  └─ zh.json
 ├─ lib/
 │  ├─ index.js           # plugin entry: Config, apply, tool publishing, /flowus, prompt section, page routes
-│  ├─ http-api.js        # host JSON API for the settings page (/flowus/api/*, behind the trust fence)
-│  ├─ client.js          # browser half: __ModuleLoader__ bundle registering Settings → FlowUs
+│  ├─ http-api.js        # settings-page host JSON API (/flowus/api/*, behind the connection trust fence)
+│  ├─ client.js          # browser half: __ModuleLoader__ bundle registering the settings page
 │  ├─ login.js           # two-leg authorization-code orchestration
-│  ├─ oauth-provider.js  # the SDK's OAuthClientProvider implementation
+│  ├─ oauth-provider.js  # the SDK's OAuthClientProvider implementation, token summary and expiry checks
 │  ├─ callback-server.js # one-shot loopback redirect receiver
-│  ├─ browser.js         # shell-free browser launch with Windows fallbacks
-│  ├─ mcp-session.js     # MCP session: connect, discover, call, normalize results
-│  ├─ tool-bridge.js     # MCP JSON Schema → DSH defineTool definitions
+│  ├─ browser.js         # shell-free browser launch with Windows candidate fallback
+│  ├─ mcp-session.js     # MCP session: connect, discover, call and normalize results
+│  ├─ tool-bridge.js     # MCP JSON Schema to DSH defineTool conversions
 │  ├─ tool-names.js      # mcp__<server>__<raw> naming contract
 │  ├─ command-grammar.js # /flowus grammar
 │  └─ store.js           # private state file (atomic, serialized)
-└─ tests/                # offline unit tests + optional live smoke tests
+└─ tests/                # offline tests and optional live smoke tests
 ```
 
 ## License
 
-Apache-2.0 — see [LICENSE](./LICENSE).
+Apache-2.0. See [LICENSE](./LICENSE).
