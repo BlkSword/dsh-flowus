@@ -22,6 +22,8 @@ dsh plugin --profile web add @blksword/dsh-flowus@latest
 
 Every `@deepseek-ai/dsh-*` package the plugin touches is declared as a Host peer, so the active dsh profile remains their owner — never add a separate dependency for one. The `@deepseek-ai/dsh-*` peers share one exact-version disjunction; `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` carry the paired ranges `~4.0.4 || ~4.0.5-alpha.1` and `~3.18.4 || ~3.18.5-alpha.1` instead, because those are the versions each runtime ships alongside.
 
+The matrix is measured, not assumed: the offline suite (109 tests) and the live network smoke tests (3) were run against each runtime's own shipped packages — 0.2.0-rc.2, 0.2.1-alpha.1 and 0.2.1-alpha.2 — with zero failures, and the named-export sets the plugin touches are identical across all three. The alpha OR-clauses are required rather than cosmetic: a prerelease only satisfies a range when a comparator carries a prerelease on the same `major.minor.patch`, so `~4.0.4` alone does not accept `4.0.5-alpha.1`, nor `0.2.0-rc.2` accept `0.2.1-alpha.1`.
+
 `dsh plugin add` installs the package, sees its `dsh.bundle.patch`, and **appends `@blksword/dsh-flowus` to `dsh.profile.bundles` automatically**. Then **restart `dsh web` and reload the browser page**: the client entry graph (`window.__DSH_BOOT__`) is composed at boot, and with the default `dsh-hmr` config (`root: []`) only explicit configuration watches are live, so adding a plugin does not hot-load into a running process. Afterwards type `/flowus status` in the GUI or open Settings → FlowUs.
 
 **pnpm 11 holds back new releases.** Its `minimumReleaseAge` defaults to 1440 minutes, so a version published less than a day ago is skipped and `@latest` resolves to the previous release — silently, with a success exit code. To install a release from the last 24 hours, name it exactly:
@@ -163,6 +165,15 @@ $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 3 live network
 Coverage: tool-naming contract, `/flowus` grammar, state store (atomicity/serialization/corruption), OAuth provider semantics and invalidation scopes, loopback callback validation (state/code/error/port fallback/abort), shell-free browser launch, MCP JSON Schema → DSH parameter DSL plus the output contract checked with DSH's own schema compiler, MCP result normalization with the concurrency lane that keeps the server's one-call-at-a-time rule, the settings-page host API (trust fence, method guard, envelope, error path), the browser bundle (registration contract, dictionary parity, `settings.section` registration, host-route path cross-check, view-model branches and one full render), a real cordis context load (registration, command surface, disposal), the **shipped** `ToolRuntime` / `CommandRuntime` / `SystemPrompt` services (the command really lands in the registry, the prompt section really survives assembly, a bridged tool really registers and runs the full execution pipeline including argument and output validation), and live discovery/PKCE/unauthorized-connect behaviour against FlowUs.
 
 After editing the source, redistribute with `npm pack` + `dsh plugin --profile web add "file:./..."`.
+
+### Verifying against another runtime
+
+The suite resolves `@deepseek-ai/*` through the `node_modules\@deepseek-ai` junction, so verifying a different release is a matter of pointing that junction at that release's package directory and re-running `node --test` (and the live smoke tests) on a copy of the repository. Two things differ between releases and are worth knowing:
+
+- **Dependency layout.** `0.2.0-rc.2` nests its dependencies at `<dsh>\node_modules\@deepseek-ai\...`, while `0.2.1-alpha.1` and `0.2.1-alpha.2` **hoist** them to `<runtime>\node_modules\@deepseek-ai\...` (there is no nested directory at all). Tooling that assumes the rc.2 shape needs a fallback.
+- **`./invariant` subpaths are gone.** `@deepseek-ai/dsh-tools/invariant`, `dsh-commands/invariant` and `dsh-system-prompt/invariant` (and their `lib/invariant.js` files) exist in `0.2.0-rc.2` and were removed in `0.2.1-alpha.1`. This plugin imports package roots only — do not add a deep import there.
+
+Verified matrix (all three releases, offline suite + live smoke tests, zero failures): `0.2.0-rc.2`, `0.2.1-alpha.1`, `0.2.1-alpha.2`.
 
 ## Troubleshooting
 

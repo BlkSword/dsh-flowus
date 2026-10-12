@@ -22,6 +22,8 @@ dsh plugin --profile web add @blksword/dsh-flowus@latest
 
 插件用到的每个 `@deepseek-ai/dsh-*` 包都声明为 Host peer，**由当前 dsh profile 作为唯一持有者**——不要为它们再单独加依赖。`@deepseek-ai/dsh-*` 共用一个精确版本析取；`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 用成对范围 `~4.0.4 || ~4.0.5-alpha.1`、`~3.18.4 || ~3.18.5-alpha.1`，因为这两个版本分别与对应运行时一起发布。
 
+这份矩阵是**实测**出来的，不是猜的：离线套件（109 项）与联网冒烟（3 项）分别在三个运行时自带的包上跑过——0.2.0-rc.2、0.2.1-alpha.1、0.2.1-alpha.2——**零失败**，且插件用到的具名导出集合在三者间逐个一致。alpha 的 OR 分支是必需的、不是装饰：prerelease 只有在比较符于同一 `major.minor.patch` 上带 prerelease 时才满足范围，所以单写 `~4.0.4` 不接受 `4.0.5-alpha.1`，单写 `0.2.0-rc.2` 也不接受 `0.2.1-alpha.1`。
+
 `dsh plugin add` 会：
 
 1. 通过 pnpm 安装该包；
@@ -200,6 +202,15 @@ dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
 ```
 
 正式发布走 `npm publish --access public`（见上面的「发布（维护者）」）。
+
+### 在另一个运行时上验证
+
+测试通过 `node_modules\@deepseek-ai` 这个 junction 解析 `@deepseek-ai/*`，所以换运行时验证就是：把 junction 指向那个版本的包目录，在仓库副本上重跑 `node --test`（以及联网冒烟）。两个版本差异值得记住：
+
+- **依赖布局**：`0.2.0-rc.2` 把依赖嵌在 `<dsh>\node_modules\@deepseek-ai\...`；`0.2.1-alpha.1` 与 `0.2.1-alpha.2` 则**提升**到 `<runtime>\node_modules\@deepseek-ai\...`（根本没有嵌套目录）。任何假定 rc.2 布局的脚本都要加回退。
+- **`./invariant` 子路径被移除**：`@deepseek-ai/dsh-tools/invariant`、`dsh-commands/invariant`、`dsh-system-prompt/invariant`（及其 `lib/invariant.js`）在 `0.2.0-rc.2` 存在，`0.2.1-alpha.1` 起被删。本插件只 import 包根——不要新增这类深路径引用。
+
+已验证矩阵（三个版本都跑过离线套件 + 联网冒烟，零失败）：`0.2.0-rc.2`、`0.2.1-alpha.1`、`0.2.1-alpha.2`。
 
 ## 排错
 
