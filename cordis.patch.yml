@@ -1,4 +1,4 @@
-# @mars-sea/dsh-flowus bundle layer.
+# @blksword/dsh-flowus bundle layer.
 #
 # One plugin row. `name` must be the FULL package specifier as installed in the
 # profile's node_modules: the loader imports it as a module, so a bare
@@ -10,7 +10,7 @@
 # copy so a user can see and change every switch from the profile layer.
 - insert:
     - id: flowus
-      name: "@mars-sea/dsh-flowus"
+      name: "@blksword/dsh-flowus"
       config:
         serverUrl: "https://mcp.flowus.cn/message"
         serverName: "flowus"

@@ -31,7 +31,7 @@ function exchange(method = 'GET') {
   };
 }
 
-const snapshot = { plugin: { name: '@mars-sea/dsh-flowus', version: '0.1.0' }, tools: [] };
+const snapshot = { plugin: { name: '@blksword/dsh-flowus', version: '0.1.0' }, tools: [] };
 
 /** @param {object} [overrides] */
 function routes(overrides = {}) {

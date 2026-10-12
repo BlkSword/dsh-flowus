@@ -1,4 +1,4 @@
-# @mars-sea/dsh-flowus
+# @blksword/dsh-flowus
 
 在 DeepSeek Harness（DSH）里使用 FlowUs 的官方 MCP 服务器：**浏览器一键授权（OAuth 2.1 + PKCE + 动态客户端注册）**，把 FlowUs 的工具注册成 Agent 原生工具，提供 `/flowus` 斜杠命令，并在**设置面板里有一个独立的 FlowUs 页面**用来查看状态与完成授权。
 
@@ -14,25 +14,55 @@ DSH 自带的 `@deepseek-ai/dsh-mcp-client` 只支持 `stdio` 与 `streamable-ht
 
 ## 安装
 
-插件包目录即本仓库目录（`package.json` 里声明了 `dsh.bundle.patch`）。把它装进某个 profile：
+本版本支持 dsh 0.2.0-rc.2、dsh 0.2.1-alpha.1 与 dsh 0.2.1-alpha.2，不支持其它版本——peer 范围就是这三个已验证版本，兼容性记录也只写这三个。0.2.0-rc.2 是 `npm i -g @deepseek-ai/dsh@latest` 与官方桌面版当前发布的版本，多数用户在它上面；0.2.1-alpha.2 是上游 alpha 通道的当前版本；0.2.1-alpha.1 因为在范围内且已验证过，所以固定在它的 profile 不会被拦：
+
+```powershell
+dsh plugin --profile web add @blksword/dsh-flowus@latest
+```
+
+插件用到的每个 `@deepseek-ai/dsh-*` 包都声明为 Host peer，**由当前 dsh profile 作为唯一持有者**——不要为它们再单独加依赖。`@deepseek-ai/dsh-*` 共用一个精确版本析取；`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 用成对范围 `~4.0.4 || ~4.0.5-alpha.1`、`~3.18.4 || ~3.18.5-alpha.1`，因为这两个版本分别与对应运行时一起发布。
+
+`dsh plugin add` 会：
+
+1. 通过 pnpm 安装该包；
+2. 发现它声明了 `dsh.bundle.patch`，于是**自动把 `@blksword/dsh-flowus` 追加到 `dsh.profile.bundles`**（无需手改 `package.json`）；
+3. 通过 `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` 等 peer 依赖解析到 DSH 安装内的实现。
+
+装好后**重启 `dsh web` 并刷新浏览器页面**：客户端半的入口图（`window.__DSH_BOOT__`）在启动时组装，默认配置下 `dsh-hmr` 的 `root: []` 只保留显式配置监视点，所以「新增一个插件」一般不会热加载进正在运行的进程。重启后在 GUI 输入 `/flowus status`，或打开「设置 → FlowUs」确认。
+
+**pnpm 11 会压住新版本**：它的 `minimumReleaseAge` 默认 1440 分钟，发布不足一天的版本会被跳过，`@latest` 静默解析到上一个版本（退出码还是成功）。要装最近 24 小时内发布的版本，就写确切版本号：
+
+```powershell
+dsh plugin --profile web add @blksword/dsh-flowus@0.1.0
+```
+
+装进任何 profile 都是同样的规则。
+
+### 不用 registry，从本地检出安装
 
 ```powershell
 # 1. 打包（在插件目录里执行；<profileDir> 例如 C:\Users\<你>\.dsh\profiles\web）
 npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
 
 # 2. 安装（cwd 是 profile 目录，所以用相对路径）
-dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
+dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
 ```
 
-`dsh plugin add` 会：
+> **Windows 提示**：pnpm 会把 `link:D:/...`、`file:D:/...` 这类绝对路径当成相对路径（生成指向 `...\profiles\web\D:\...` 的坏链接）。所以把 tarball 打到 profile 目录里，再用上面的相对路径 `file:` 安装。
 
-1. 通过 pnpm 安装该包；
-2. 发现它声明了 `dsh.bundle.patch`，于是**自动把 `@mars-sea/dsh-flowus` 追加到 `dsh.profile.bundles`**（无需手改 `package.json`）；
-3. 通过 `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` 等 peer 依赖解析到 DSH 安装内的实现。
+## 发布（维护者）
 
-装好后**重启 `dsh web` 并刷新浏览器页面**：客户端半的入口图（`window.__DSH_BOOT__`）在启动时组装，默认配置下 `dsh-hmr` 的 `root: []` 只保留显式配置监视点，所以「新增一个插件」一般不会热加载进正在运行的进程。重启后在 GUI 输入 `/flowus status`，或打开「设置 → FlowUs」确认。
+```powershell
+npm login                      # 每台机器一次；@blksword 这个 scope 必须属于该账号
+npm publish --access public    # prepublishOnly 会先跑一遍离线测试
+npm view @blksword/dsh-flowus version
 
-> **Windows 提示**：pnpm 会把 `link:D:/...`、`file:D:/...` 这类绝对路径当成相对路径（生成指向 `...\profiles\web\D:\...` 的坏链接）。所以这里用「打 tarball + 相对路径」的方式安装；不要用绝对路径的 `link:`。
+# 对发布产物做一次端到端校验：
+dsh plugin --profile web remove @blksword/dsh-flowus
+dsh plugin --profile web add @blksword/dsh-flowus@latest
+```
+
+`dsh plugin add` 是唯一受支持的安装路径：加载器从 profile 的 `node_modules` 解析该包，客户端半则由包内 `exports["./client"]` 提供。
 
 ## 首次授权
 
@@ -162,18 +192,20 @@ $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟�
 - `tests/plugin-real-services.test.js` 装真实的 `ToolRuntime` / `CommandRuntime` / `SystemPrompt`：命令真的进了注册表、提示词段真的进了 assembly、桥接工具真的注册并跑完整执行管线（参数校验、输出契约校验、错误路径）
 - `tests/flowus-live.test.js` 真实端点发现、PKCE 授权 URL、未授权连接的错误映射
 
-改动源码后重新分发：
+改动源码后重新分发（本地检出方式）：
 
 ```powershell
 npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
-dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
+dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
 ```
+
+正式发布走 `npm publish --access public`（见上面的「发布（维护者）」）。
 
 ## 排错
 
 | 现象 | 处理 |
 | --- | --- |
-| `/flowus` 命令不存在 | 插件没加载：确认 `dsh.profile.bundles` 里有 `@mars-sea/dsh-flowus`，然后**重启 `dsh web`** |
+| `/flowus` 命令不存在 | 插件没加载：确认 `dsh.profile.bundles` 里有 `@blksword/dsh-flowus`，然后**重启 `dsh web`** |
 | 设置里没有 FlowUs 页面 | 同上：客户端入口图在启动时组装；重启 `dsh web` 并刷新浏览器页面 |
 | 设置页里点按钮报 401 | 页面请求需要带登录 Cookie；请从 `dsh web` 打印的带 `?token=` 的地址打开 GUI |
 | 授权后没有工具 | `/flowus reload`；再看 `/flowus status` 或设置页的错误行 |

@@ -77,7 +77,7 @@ function collectText(node, out = []) {
 }
 
 const snapshotOf = (overrides = {}) => ({
-  plugin: { name: '@mars-sea/dsh-flowus', version: '0.1.0', serverName: 'flowus' },
+  plugin: { name: '@blksword/dsh-flowus', version: '0.1.0', serverName: 'flowus' },
   server: {
     url: 'https://mcp.flowus.cn/message',
     namespace: 'mcp__flowus__',
@@ -94,7 +94,7 @@ const snapshotOf = (overrides = {}) => ({
 
 test('the bundle registers exactly one factory under the package name', () => {
   assert.equal(registrations.length, 1);
-  assert.equal(registration.id, '@mars-sea/dsh-flowus');
+  assert.equal(registration.id, '@blksword/dsh-flowus');
   assert.equal(typeof registration.factory, 'function');
   assert.deepEqual(requestedModules, ['react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives']);
 });

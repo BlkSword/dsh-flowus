@@ -1,4 +1,4 @@
-# @mars-sea/dsh-flowus
+# @blksword/dsh-flowus
 
 Use FlowUs from DeepSeek Harness (DSH): **browser-based OAuth 2.1 sign-in (PKCE + dynamic client registration)** against the official FlowUs MCP server, FlowUs tools registered as native agent tools, a `/flowus` command for the human, and a **dedicated FlowUs page in the settings panel** for authorization and state.
 
@@ -14,17 +14,49 @@ DSH ships `@deepseek-ai/dsh-mcp-client`, which supports `stdio` and `streamable-
 
 ## Install
 
+This release supports dsh 0.2.0-rc.2, dsh 0.2.1-alpha.1 and dsh 0.2.1-alpha.2, and nothing else — the plugin's peer range is exactly those three verified versions, and its compatibility records name them alone. 0.2.0-rc.2 is what `npm i -g @deepseek-ai/dsh@latest` and the official desktop build ship, so it is the version most users are on; 0.2.1-alpha.2 is the upstream alpha channel today, and 0.2.1-alpha.1 stays in the range because it was already verified, so a profile pinned to it keeps working:
+
+```powershell
+dsh plugin --profile web add @blksword/dsh-flowus@latest
+```
+
+Every `@deepseek-ai/dsh-*` package the plugin touches is declared as a Host peer, so the active dsh profile remains their owner — never add a separate dependency for one. The `@deepseek-ai/dsh-*` peers share one exact-version disjunction; `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` carry the paired ranges `~4.0.4 || ~4.0.5-alpha.1` and `~3.18.4 || ~3.18.5-alpha.1` instead, because those are the versions each runtime ships alongside.
+
+`dsh plugin add` installs the package, sees its `dsh.bundle.patch`, and **appends `@blksword/dsh-flowus` to `dsh.profile.bundles` automatically**. Then **restart `dsh web` and reload the browser page**: the client entry graph (`window.__DSH_BOOT__`) is composed at boot, and with the default `dsh-hmr` config (`root: []`) only explicit configuration watches are live, so adding a plugin does not hot-load into a running process. Afterwards type `/flowus status` in the GUI or open Settings → FlowUs.
+
+**pnpm 11 holds back new releases.** Its `minimumReleaseAge` defaults to 1440 minutes, so a version published less than a day ago is skipped and `@latest` resolves to the previous release — silently, with a success exit code. To install a release from the last 24 hours, name it exactly:
+
+```powershell
+dsh plugin --profile web add @blksword/dsh-flowus@0.1.0
+```
+
+The same applies to every profile you install into.
+
+### Installing from a checkout instead of the registry
+
 ```powershell
 # 1. Pack (from this package directory)
 npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
 
 # 2. Install (cwd is the profile directory, hence the relative spec)
-dsh plugin --profile web add "file:./mars-sea-dsh-flowus-0.1.0.tgz"
+dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
 ```
 
-`dsh plugin add` installs the package, sees its `dsh.bundle.patch`, and **appends `@mars-sea/dsh-flowus` to `dsh.profile.bundles` automatically**. Then **restart `dsh web` and reload the browser page**: the client entry graph (`window.__DSH_BOOT__`) is composed at boot, and with the default `dsh-hmr` config (`root: []`) only explicit configuration watches are live, so adding a plugin does not hot-load into a running process. Afterwards type `/flowus status` in the GUI or open Settings → FlowUs.
+> **Windows note:** pnpm mis-resolves absolute `link:D:/...` / `file:D:/...` specs (it creates a junction to `...\profiles\web\D:\...`). Pack the tarball into the profile directory and use the relative `file:` spec above.
 
-> **Windows note:** pnpm mis-resolves absolute `link:D:/...` / `file:D:/...` specs (it creates a junction to `...\profiles\web\D:\...`). Use the tarball + relative-path route above.
+## Releasing (maintainers)
+
+```powershell
+npm login                      # once per machine; the scope @blksword must belong to the account
+npm publish --access public    # prepublishOnly runs the offline suite first
+npm view @blksword/dsh-flowus version
+
+# End-to-end check of the published artifact:
+dsh plugin --profile web remove @blksword/dsh-flowus
+dsh plugin --profile web add @blksword/dsh-flowus@latest
+```
+
+`dsh plugin add` is the only supported install path: the loader resolves the package from the profile's `node_modules`, and the client half is served from the package's `exports["./client"]`.
 
 ## First sign-in
 
@@ -136,7 +168,7 @@ After editing the source, redistribute with `npm pack` + `dsh plugin --profile w
 
 | Symptom | Fix |
 | --- | --- |
-| `/flowus` is unknown | The plugin is not loaded: check `dsh.profile.bundles` contains `@mars-sea/dsh-flowus`, then **restart `dsh web`** |
+| `/flowus` is unknown | The plugin is not loaded: check `dsh.profile.bundles` contains `@blksword/dsh-flowus`, then **restart `dsh web`** |
 | No FlowUs page in Settings | Same cause: the client entry graph is composed at boot — restart `dsh web` and reload the page |
 | A button on the settings page answers 401 | Page requests need the login cookie: open the GUI from the `?token=...` URL that `dsh web` printed |
 | Authorized but no tools | `/flowus reload`, then read the error line in `/flowus status` or on the settings page |

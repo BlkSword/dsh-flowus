@@ -1,7 +1,7 @@
 {
-  "name": "@mars-sea/dsh-flowus",
+  "name": "@blksword/dsh-flowus",
   "version": "0.1.0",
-  "description": "DeepSeek Harness plugin for FlowUs: native MCP OAuth sign-in (browser + PKCE + dynamic client registration), FlowUs MCP tools registered as native agent tools, and /flowus commands.",
+  "description": "FlowUs for DeepSeek Harness: browser OAuth sign-in against the official FlowUs MCP server, its tools registered as native agent tools, a /flowus command, and a Settings -> FlowUs page.",
   "icon": "./icon.svg",
   "type": "module",
   "main": "./lib/index.js",
@@ -19,6 +19,14 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.0-rc.2": "compatible",
+        "0.2.1-alpha.1": "compatible",
+        "0.2.1-alpha.2": "compatible"
+      },
+      "dsh": "0.2.0-rc.2 || 0.2.1-alpha.1 || 0.2.1-alpha.2"
+    },
     "client": {
       "platform": "web",
       "inject": [
@@ -34,20 +42,21 @@
     "icon.svg",
     "cordis.patch.yml",
     "README.md",
-    "README.zh-CN.md"
+    "README.zh-CN.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22",
-    "dsh": "0.2.0-rc.2"
+    "dsh": "0.2.0-rc.2 || 0.2.1-alpha.1 || 0.2.1-alpha.2"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.0.4",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
-    "@deepseek-ai/schemastery": "~3.18.4"
+    "@deepseek-ai/cordis": "~4.0.4 || ~4.0.5-alpha.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2 || 0.2.1-alpha.1 || 0.2.1-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-alpha.1 || 0.2.1-alpha.2",
+    "@deepseek-ai/schemastery": "~3.18.4 || ~3.18.5-alpha.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-client-ui-primitives": {
@@ -56,7 +65,8 @@
   },
   "scripts": {
     "test": "node --test",
-    "test:live": "node --test tests/flowus-live.test.js"
+    "test:live": "node --test tests/flowus-live.test.js",
+    "prepublishOnly": "node --test"
   },
   "keywords": [
     "deepseek-harness",
@@ -65,7 +75,20 @@
     "mcp",
     "oauth",
     "plugin",
-    "bundle"
+    "bundle",
+    "settings-page"
   ],
-  "license": "Apache-2.0"
+  "author": "BlkSword <wfshenm@qq.com>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BlkSword/dsh-flowus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BlkSword/dsh-flowus/issues"
+  },
+  "homepage": "https://github.com/BlkSword/dsh-flowus#readme",
+  "publishConfig": {
+    "access": "public"
+  }
 }
