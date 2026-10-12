@@ -5,3 +5,5 @@ node_modules/
 # Local research notes (not published with the plugin)
 .notes/
 *.log
+# Local npm credentials (never commit a token)
+.npmrc
