@@ -40,7 +40,7 @@ dsh plugin --profile web add @blksword/dsh-flowus@latest
 pnpm 11 的 `minimumReleaseAge` 默认值为 1440 分钟：发布不足 24 小时的版本在解析 `@latest` 时会被跳过，解析结果回退至上一版本，且退出码仍为成功。安装最新发布时应指定确切版本号：
 
 ```powershell
-dsh plugin --profile web add @blksword/dsh-flowus@0.1.0
+dsh plugin --profile web add @blksword/dsh-flowus@0.1.1
 ```
 
 ### 从 GitHub 安装
@@ -60,7 +60,7 @@ dsh plugin --profile web add github:BlkSword/dsh-flowus
 npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
 
 # 2. 在 profile 目录中安装（使用相对路径）
-dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
+dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.1.tgz"
 ```
 
 > Windows 说明：pnpm 会将 `link:D:/...`、`file:D:/...` 形式的绝对路径按相对路径解析，从而生成指向 `...\profiles\web\D:\...` 的无效链接。因此应先将 tarball 打包至 profile 目录，再使用上述相对 `file:` 说明符。
@@ -188,14 +188,16 @@ peer 依赖声明方式：`@deepseek-ai/dsh-*` 采用精确版本析取 `0.2.0-r
 本地开发需具备以下两项前提（`node_modules` 不入库）：
 
 ```powershell
-npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @modelcontextprotocol/client@2.0.0
+npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @modelcontextprotocol/client@^2.2.0
 # 使 node --test 能够加载真实的 dsh-tools / schemastery：指向 DSH 安装内的同名目录
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # 离线套件：112 项用例，109 项通过，3 项联网用例跳过
+npm test                                            # 离线套件：115 项用例，112 项通过，3 项联网用例跳过
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟：3 项
 ```
+
+> **顺序不能颠倒。** 必须先执行 `npm install`，再建 junction：npm 会把 junction 内的 `@deepseek-ai/*` 当作多余依赖，顺着链接把它们从 DSH 安装里删掉。已有 junction 时要更新依赖，先 `cmd /c rmdir node_modules\@deepseek-ai` 摘掉链接，装完再重建。
 
 测试构成：
 
@@ -204,7 +206,7 @@ $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟�
 | `tests/tool-names.test.js` | 工具命名契约（与官方 MCP 桥一致） |
 | `tests/command-grammar.test.js` | `/flowus` 语法解析 |
 | `tests/store.test.js` | 状态文件的原子写入、串行化与损坏处理 |
-| `tests/oauth-provider.test.js` | `OAuthClientProvider` 语义与状态裁剪 |
+| `tests/oauth-provider.test.js` | `OAuthClientProvider` 语义、issuer 绑定（凭据不跨授权服务器出示）与状态裁剪 |
 | `tests/callback-server.test.js` | 回调校验（state、code、error、端口回退、abort） |
 | `tests/browser.test.js` | 不依赖 shell 的浏览器启动与候选回退 |
 | `tests/tool-bridge.test.js` | MCP JSON Schema 至 DSH 参数 DSL 的转换与输出契约（以 DSH 自身的 schema 编译器校验） |
@@ -219,7 +221,7 @@ $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟�
 
 ```powershell
 npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
-dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
+dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.1.tgz"
 ```
 
 正式发布参见“发布”。

@@ -3,21 +3,23 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { FlowusOAuthProvider, describeTokens, tokensAreStale } from '../lib/oauth-provider.js';
+import { FlowusOAuthProvider, describeTokens, issuersMatch, tokensAreStale } from '../lib/oauth-provider.js';
 import { JsonStateStore } from '../lib/store.js';
 
-/** @returns {Promise<{ store: JsonStateStore, provider: FlowusOAuthProvider, redirects: string[] }>} */
+/** @returns {Promise<{ store: JsonStateStore, provider: FlowusOAuthProvider, redirects: string[], logs: string[] }>} */
 async function fixture(redirectUrl = 'http://127.0.0.1:42813/callback') {
   const store = new JsonStateStore(join(await mkdtemp(join(tmpdir(), 'dsh-flowus-oauth-')), 'oauth.json'));
   const redirects = [];
+  const logs = [];
   const provider = new FlowusOAuthProvider({
     store,
     redirectUrl,
     clientName: 'Test Client',
     state: 'fixed-state',
+    log: (message) => logs.push(message),
     onRedirect: (url) => redirects.push(url.toString()),
   });
-  return { store, provider, redirects };
+  return { store, provider, redirects, logs };
 }
 
 test('client metadata is a public client bound to the loopback redirect', async () => {
@@ -59,6 +61,47 @@ test('an unstamped client read is stamped from the SDK context without a write',
   const stamped = await provider.clientInformation({ issuer: 'https://mcp.flowus.cn' });
   assert.equal(stamped.issuer, 'https://mcp.flowus.cn');
   assert.equal((await store.read()).clientInformation.issuer, undefined);
+});
+
+test('a credential bound to another authorization server is never presented', async () => {
+  const { provider, logs } = await fixture();
+  const flowus = 'https://mcp.flowus.cn';
+  await provider.saveClientInformation({ client_id: 'abc' }, { issuer: flowus });
+  await provider.saveTokens({ access_token: 'a', token_type: 'Bearer', refresh_token: 'r' }, { issuer: flowus });
+
+  // The transport's bearer-token path reads with no context and is unaffected.
+  assert.equal((await provider.tokens()).access_token, 'a');
+  assert.ok(await provider.clientInformation());
+
+  // Another authorization server gets nothing, and the reason is logged.
+  assert.equal(await provider.tokens({ issuer: 'https://evil.example' }), undefined);
+  assert.equal(await provider.clientInformation({ issuer: 'https://evil.example' }), undefined);
+  assert.equal(logs.filter((line) => line.includes('withholding it')).length, 2);
+
+  // Withheld, not deleted: the issuer that owns the credential still reads it.
+  assert.equal((await provider.tokens({ issuer: flowus })).refresh_token, 'r');
+  assert.equal((await provider.clientInformation({ issuer: flowus })).client_id, 'abc');
+});
+
+test('the issuer comparison tolerates one trailing slash, as the SDK does', async () => {
+  const { provider } = await fixture();
+  await provider.saveTokens({ access_token: 'a', token_type: 'Bearer' }, { issuer: 'https://mcp.flowus.cn/' });
+  assert.equal((await provider.tokens({ issuer: 'https://mcp.flowus.cn' })).access_token, 'a');
+  assert.equal(await provider.tokens({ issuer: 'https://mcp.flowus.cn/other' }), undefined);
+});
+
+test('an unstamped token set is read through for any issuer, and issuersMatch follows the tolerance rules', async () => {
+  const { provider } = await fixture();
+  await provider.saveTokens({ access_token: 'a', token_type: 'Bearer' });
+  assert.equal((await provider.tokens({ issuer: 'https://mcp.flowus.cn' })).access_token, 'a');
+
+  assert.equal(issuersMatch('https://a', 'https://a'), true);
+  assert.equal(issuersMatch('https://a/', 'https://a'), true);
+  assert.equal(issuersMatch('https://a', 'https://a/'), true);
+  assert.equal(issuersMatch('https://a', 'https://b'), false);
+  assert.equal(issuersMatch('https://mcp.flowus.cn', 'https://mcp.flowus.cn.evil.example'), false);
+  // The tolerance strips one trailing slash, exactly like the SDK's own copy.
+  assert.equal(issuersMatch('https://a/', 'https://a//'), true);
 });
 
 test('redirectToAuthorization records the URL and delegates', async () => {

@@ -40,7 +40,7 @@ dsh plugin --profile web add @blksword/dsh-flowus@latest
 pnpm 11 applies `minimumReleaseAge`, which defaults to 1440 minutes: a version published less than 24 hours ago is skipped when `@latest` is resolved, the resolution falls back to the previous version, and the exit code still reports success. To install a recent release, name the exact version:
 
 ```powershell
-dsh plugin --profile web add @blksword/dsh-flowus@0.1.0
+dsh plugin --profile web add @blksword/dsh-flowus@0.1.1
 ```
 
 ### From GitHub
@@ -60,7 +60,7 @@ This path has been verified end to end: pnpm resolves the git dependency, the bu
 npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
 
 # 2. Install from the profile directory (relative specifier)
-dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
+dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.1.tgz"
 ```
 
 > Windows note: pnpm interprets absolute `link:D:/...` and `file:D:/...` specifiers as relative paths and creates an invalid link pointing at `...\profiles\web\D:\...`. Pack the tarball into the profile directory first, then use the relative `file:` specifier shown above.
@@ -189,14 +189,16 @@ Configuration is supplied by a profile patch layer (`$DSH_HOME/profiles/web/cord
 Local development requires the following two prerequisites (`node_modules` is not tracked):
 
 ```powershell
-npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @modelcontextprotocol/client@2.0.0
+npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @modelcontextprotocol/client@^2.2.0
 # Let node --test load the real dsh-tools / schemastery: point the junction at the DSH installation
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # offline suite: 112 tests, 109 passed, 3 live tests skipped
+npm test                                            # offline suite: 115 tests, 112 passed, 3 live tests skipped
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # live smoke tests: 3
 ```
+
+> **The order matters.** Run `npm install` first and create the junction afterwards: npm treats the `@deepseek-ai/*` packages inside the junction as extraneous and unlinks them out of the DSH installation. To update dependencies while the junction exists, detach it first with `cmd /c rmdir node_modules\@deepseek-ai` and recreate it afterwards.
 
 Test coverage:
 
@@ -205,7 +207,7 @@ Test coverage:
 | `tests/tool-names.test.js` | Tool-naming contract (identical to the stock MCP bridge) |
 | `tests/command-grammar.test.js` | `/flowus` grammar |
 | `tests/store.test.js` | Atomic writes, serialization and corruption handling for the state file |
-| `tests/oauth-provider.test.js` | `OAuthClientProvider` semantics and state invalidation scopes |
+| `tests/oauth-provider.test.js` | `OAuthClientProvider` semantics, the issuer binding (a credential is never presented to another authorization server) and state invalidation scopes |
 | `tests/callback-server.test.js` | Callback validation (state, code, error, port fallback, abort) |
 | `tests/browser.test.js` | Shell-free browser launch and candidate fallback |
 | `tests/tool-bridge.test.js` | MCP JSON Schema to DSH parameter DSL, plus the output contract checked with DSH's own schema compiler |
@@ -220,7 +222,7 @@ Distribution from a modified checkout:
 
 ```powershell
 npm pack --pack-destination "$env:USERPROFILE\.dsh\profiles\web"
-dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.0.tgz"
+dsh plugin --profile web add "file:./blksword-dsh-flowus-0.1.1.tgz"
 ```
 
 Formal publication is described under Releasing.

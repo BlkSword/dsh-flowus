@@ -1,6 +1,6 @@
 {
   "name": "@blksword/dsh-flowus",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "FlowUs for DeepSeek Harness: browser OAuth sign-in against the official FlowUs MCP server, its tools registered as native agent tools, a /flowus command, and a Settings -> FlowUs page.",
   "icon": "./icon.svg",
   "type": "module",
@@ -50,7 +50,7 @@
     "dsh": "0.2.0-rc.2 || 0.2.1-alpha.1 || 0.2.1-alpha.2"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "2.0.0"
+    "@modelcontextprotocol/client": "^2.2.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4 || ~4.0.5-alpha.1",

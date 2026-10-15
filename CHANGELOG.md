@@ -4,6 +4,32 @@ All notable changes to this plugin are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.1
+
+### Security
+
+- **Raised the MCP client floor to `^2.2.0`** (`@modelcontextprotocol/client`,
+  previously pinned to `2.0.0`). [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h)
+  / CVE-2026-104850 (high, CVSS 7.5) covers `>=2.0.0 <2.2.0`: the OAuth client
+  did not tie saved credentials to the authorization server they belong to, so a
+  malicious or compromised MCP server could name its own authorization server
+  and receive the stored `refresh_token` and `client_secret` with no user
+  interaction. The client now records the authorization server as `issuer` on
+  saved credentials and refuses to present them elsewhere (SEP-2352). No source
+  change was needed for the upgrade: the offline suite and the live smoke tests
+  pass unchanged against `2.3.1`.
+- **The provider refuses cross-issuer credentials itself.** `tokens()` and
+  `clientInformation()` now return nothing when the requested authorization
+  server disagrees with the `issuer` recorded on the stored credential, so the
+  binding holds even for a caller that drives the provider with an SDK version
+  predating the fix. The user is asked to sign in again instead of leaking a
+  refresh token to a different authorization server.
+
+### Compatibility
+
+- Unchanged: DSH `0.2.0-rc.2`, `0.2.1-alpha.1`, `0.2.1-alpha.2`; the same peer
+  ranges as `0.1.0`.
+
 ## 0.1.0
 
 First public release.
