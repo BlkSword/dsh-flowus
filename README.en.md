@@ -9,7 +9,7 @@ A FlowUs integration plugin for DeepSeek Harness (DSH). The plugin performs OAut
 - **Browser authorization.** An OAuth 2.1 authorization-code flow against the official FlowUs MCP server, with a loopback callback listener on `127.0.0.1`. Access and refresh tokens are stored in a plugin-private state file and renewed automatically.
 - **Native tools.** Every tool published by the FlowUs MCP server is registered with the DSH tool registry under the same naming convention as the stock MCP bridge, namely `mcp__flowus__<tool>`.
 - **`/flowus` command.** Status reporting, authorization, sign-out, tool listing, direct invocation, reconnection and help.
-- **Settings page.** A dedicated FlowUs page in the settings panel that reports authorization and connection state and performs authorization, reconnection and sign-out operations.
+- **Settings page.** A dedicated FlowUs page in the settings panel: authorization and connection state, the server version, the tool catalogue (searchable by name or description, each entry labelled read-only or write), and the authorization, reconnection, sign-out and refresh actions. The credential path and the authorization URL can be copied with one click, the page polls while a browser login is pending, and it refreshes immediately when the tab regains focus.
 - **System-prompt section.** The server instructions and the current tool catalogue are contributed to the system prompt, with explicit guidance when the workspace is not yet authorized.
 
 ## Background
@@ -179,9 +179,12 @@ Configuration is supplied by a profile patch layer (`$DSH_HOME/profiles/web/cord
 ```
 
 - **Token renewal.** On a runtime 401 the SDK refreshes the token with the stored refresh token and retries once; if the retry still fails, the plugin reports an explicit "re-authorization required" error. The plugin records the acquisition time and lifetime of the token set and refreshes before connecting when the access token is already stale, so the first request does not have to fail with 401.
-- **Tool-list changes.** `notifications/tools/list_changed` triggers a re-synchronization. Synchronization replaces the whole generation, and a failed synchronization keeps the previous generation in place.
+- **Tool-list changes.** `notifications/tools/list_changed` triggers a re-synchronization: the plugin adopts the new list and re-registers the whole generation, keeping the previous one when a re-registration fails.
+- **Session self-healing.** When the server has forgotten the session (JSON-RPC `-32001`, or a 404 from the session endpoint), the plugin reconnects once, re-registers the tool list and replays the call in flight, so no manual `/flowus reload` is required.
 - **Serialized invocation.** The FlowUs server permits only one in-flight tool call per MCP session; a concurrent call is answered with JSON-RPC `-32002`. The plugin therefore executes calls through a single serial queue and additionally retries a concurrency rejection with bounded backoff, so parallel read-only scheduling by the model does not fail (measured: five concurrent calls, all successful).
 - **Naming conflicts.** If an `mcp__flowus__*` name is already owned by another plugin, the entire synchronization is refused and no partial generation is published.
+- **Callback validation.** The callback listener accepts `GET` only and requires exactly one `state` that matches its own (compared in constant time). A request that fails either check is answered and then ignored — it never settles the login — so no local process or page can cancel an authorization in progress. The listener is bound to loopback only (RFC 8252 §7.3), and server-supplied error text reaches the browser escaped and truncated.
+- **Credential binding.** Stored credentials record the resource URL they were issued for. When the configured `serverUrl` points at another resource, the plugin refuses to present the token and asks for re-authorization instead of handing the FlowUs token to a third-party endpoint.
 - **Settings page.** The host half registers `/flowus/api/*` through `ctx.webServer.register`; the client half is a `window.__ModuleLoader__` classic script (`lib/client.js`, with no build step) registered into the `settings.section` slot. The two halves communicate through `fetch` and JSON snapshots; no custom RPC protocol is introduced.
 
 ## Development and testing
@@ -194,7 +197,7 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # offline suite: 115 tests, 112 passed, 3 live tests skipped
+npm test                                            # offline suite: 135 tests, 132 passed, 3 live tests skipped
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # live smoke tests: 3
 ```
 

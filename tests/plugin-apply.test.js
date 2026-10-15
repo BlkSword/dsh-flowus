@@ -80,6 +80,9 @@ test('the config schema applies defaults and rejects invalid values', () => {
   assert.equal(defaults.promptSection, true);
   assert.throws(() => plugin.Config({ serverName: 'not a namespace' }));
   assert.throws(() => plugin.Config({ callbackPort: 70_000 }));
+  // RFC 8252 §7.3: the OAuth redirect may only be loopback.
+  assert.throws(() => plugin.Config({ callbackHost: '0.0.0.0' }));
+  assert.equal(plugin.Config({ callbackHost: '::1' }).callbackHost, '::1');
 });
 
 test('apply registers /flowus and a system-prompt section without publishing tools', async () => {
@@ -158,6 +161,46 @@ test('promptSection: false registers no section', async () => {
   const { sections, dispose } = await boot({ promptSection: false });
   try {
     assert.equal(sections.length, 0);
+  } finally {
+    await dispose();
+  }
+});
+
+test('credentials issued for another resource are refused, never presented', async () => {
+  const { commands, statePath, dispose } = await boot({ serverUrl: 'https://someone-else.example/message' });
+  try {
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        clientInformation: { client_id: 'abc', issuer: 'https://mcp.flowus.cn' },
+        tokens: { access_token: 'a', token_type: 'Bearer', refresh_token: 'r', issuer: 'https://mcp.flowus.cn' },
+        resourceUrl: 'https://mcp.flowus.cn/message',
+      }),
+    );
+    const result = await run(commands, 'reload');
+    assert.equal(result.kind, 'error');
+    assert.match(result.text, /belong to https:\/\/mcp\.flowus\.cn\/message/u);
+    assert.match(result.text, /someone-else\.example/u);
+    assert.match(result.text, /logout/u);
+  } finally {
+    await dispose();
+  }
+});
+
+test('credentials for the configured resource pass the binding check', async () => {
+  // A closed loopback port makes the connect fail fast without any network.
+  const { commands, statePath, dispose } = await boot({ serverUrl: 'http://127.0.0.1:9/message' });
+  try {
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        tokens: { access_token: 'a', token_type: 'Bearer', refresh_token: 'r' },
+        resourceUrl: 'http://127.0.0.1:9/message/',
+      }),
+    );
+    const result = await run(commands, 'reload');
+    assert.equal(result.kind, 'error', 'the connection itself fails');
+    assert.doesNotMatch(result.text, /belong to/u);
   } finally {
     await dispose();
   }

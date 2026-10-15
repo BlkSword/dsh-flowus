@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { FlowusOAuthProvider, describeTokens, issuersMatch, tokensAreStale } from '../lib/oauth-provider.js';
+import { FlowusOAuthProvider, describeTokens, issuersMatch, sameResourceUrl, tokensAreStale } from '../lib/oauth-provider.js';
 import { JsonStateStore } from '../lib/store.js';
 
 /** @returns {Promise<{ store: JsonStateStore, provider: FlowusOAuthProvider, redirects: string[], logs: string[] }>} */
@@ -198,4 +198,18 @@ test('tokensAreStale treats missing, expired and soon-expiring tokens as stale',
   assert.equal(tokensAreStale({ access_token: 'a', token_type: 'Bearer' }), false);
   assert.equal(tokensAreStale({ access_token: 'a', token_type: 'Bearer', expires_in: 10, obtainedAt: Date.now() }), true);
   assert.equal(tokensAreStale({ access_token: 'a', token_type: 'Bearer', expires_in: 3600, obtainedAt: Date.now() }), false);
+});
+
+test('sameResourceUrl binds a URL to its resource, not to a look-alike', () => {
+  assert.equal(sameResourceUrl('https://mcp.flowus.cn/message', 'https://mcp.flowus.cn/message'), true);
+  assert.equal(sameResourceUrl('https://mcp.flowus.cn/message/', 'https://mcp.flowus.cn/message'), true);
+  // An origin-only indicator still names the same server as one of its paths.
+  assert.equal(sameResourceUrl('https://mcp.flowus.cn', 'https://mcp.flowus.cn/message'), true);
+  assert.equal(sameResourceUrl('HTTPS://MCP.FlowUs.CN/message', 'https://mcp.flowus.cn/message'), true);
+
+  assert.equal(sameResourceUrl('https://mcp.flowus.cn/message', 'https://mcp.flowus.cn/messages'), false);
+  assert.equal(sameResourceUrl('https://mcp.flowus.cn/message', 'https://mcp.flowus.cn/other'), false);
+  assert.equal(sameResourceUrl('https://mcp.flowus.cn/message', 'https://mcp.flowus.cn.evil.example/message'), false);
+  assert.equal(sameResourceUrl('https://mcp.flowus.cn/message', 'http://mcp.flowus.cn/message'), false);
+  assert.equal(sameResourceUrl('not a url', 'https://mcp.flowus.cn/message'), false);
 });

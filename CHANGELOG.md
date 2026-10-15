@@ -25,6 +25,44 @@ All notable changes to this plugin are documented here. The format follows
   predating the fix. The user is asked to sign in again instead of leaking a
   refresh token to a different authorization server.
 
+- **A loopback callback request can no longer cancel a login.** The listener now
+  validates the login attempt's `state` *before* it looks at `error` (constant
+  time, exactly one value), accepts `GET` only, ignores a callback it cannot
+  prove is its own instead of settling on it, and echoes server-supplied error
+  text into the browser page escaped and truncated. Binding is restricted to a
+  loopback host (RFC 8252 §7.3), and `callbackHost` is validated as such.
+- **Stored credentials are bound to the resource they were issued for.** The
+  resource URL recorded at authorization is compared with the configured
+  `serverUrl` before any connection is opened; a mismatch refuses and asks for
+  re-authorization rather than presenting the FlowUs bearer token to whatever
+  endpoint the configuration now names. `sameResourceUrl` tolerates a path
+  ancestor and a trailing slash, and never confuses a look-alike host or a
+  sibling path.
+
+### Fixed
+
+- **A lost MCP session heals itself.** The FlowUs server forgets a session it no
+  longer holds and answers `-32001 Session not found`; the plugin now
+  reconnects once, re-registers the tool list and replays the call (or the
+  discovery request) in flight, instead of failing every tool until a human ran
+  `/flowus reload`. Verified against the live server by poisoning a real session
+  id: the call was replayed after a reconnect and returned real data.
+- **`tools/list_changed` now re-registers the published generation.** The
+  notification previously updated a cached list nothing read, while the README
+  claimed a re-sync; the session now hands the refreshed list to the plugin,
+  which replaces the generation through the same path as `/flowus reload`.
+
+### Changed
+
+- **Settings page.** The authorized-but-disconnected state explains the missing
+  session instead of reusing the credential copy; the tool catalogue is
+  searchable by name or description and labels each tool read-only or write; the
+  credential path and the authorization URL have copy buttons; the last sync and
+  a pending login show a relative time; the server version is displayed; a
+  hidden tab stops polling and regaining focus refreshes immediately; the
+  pending banner and the error line are announced through `aria-live`/`alert`.
+  The host snapshot's tool entries now carry `readOnly`.
+
 ### Compatibility
 
 - Unchanged: DSH `0.2.0-rc.2`, `0.2.1-alpha.1`, `0.2.1-alpha.2`; the same peer

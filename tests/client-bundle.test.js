@@ -40,6 +40,7 @@ const fakeJsxRuntime = {
 };
 const fakePrimitives = {
   Button: (props) => ({ type: 'Button', props }),
+  Input: (props) => ({ type: 'Input', props }),
   Tag: (props) => ({ type: 'Tag', props }),
   StateDot: (props) => ({ type: 'StateDot', props }),
 };
@@ -53,7 +54,7 @@ const shellRequire = (id) => {
 };
 
 const client = registration.factory(shellRequire);
-const { NS, statusViewModel, FlowusSettingsPage, en, zh, api } = client.__internals;
+const { NS, statusViewModel, filterTools, timeAgo, describeAgo, FlowusSettingsPage, en, zh, api } = client.__internals;
 
 /** Dictionary reader mirroring the framework's `t`, including `{placeholder}` substitution. */
 const t = (key, values) => {
@@ -323,4 +324,114 @@ test('the page renders the loading state and a full ready state', () => {
   assert.match(rendered, /Search pages/u);
   assert.match(rendered, /Sign out/u);
   assert.match(rendered, /MCP endpoint/u);
+});
+
+test('an authorized-but-disconnected page explains the session, not the credentials', () => {
+  const model = statusViewModel(
+    snapshotOf({ authorization: { configured: true, scope: 'all', expiresAt: null, expired: null, hasRefreshToken: true } }),
+    t,
+  );
+  assert.equal(model.badge.title, 'Authorized, not connected');
+  assert.match(model.badge.detail, /no MCP session is open/u);
+  assert.equal(model.canSignIn, true);
+  assert.equal(model.canSignOut, true);
+});
+
+test('the tool filter matches names and descriptions while AND-ing every term', () => {
+  const tools = [
+    { name: 'mcp__flowus__search_text', rawName: 'flowus_search_text', description: 'Search pages by keyword' },
+    { name: 'mcp__flowus__create_page', rawName: 'flowus_create_page', description: 'Create a page' },
+  ];
+  assert.equal(filterTools(tools, '').length, 2);
+  assert.deepEqual(
+    filterTools(tools, 'create').map((tool) => tool.name),
+    ['mcp__flowus__create_page'],
+  );
+  assert.deepEqual(
+    filterTools(tools, 'page create').map((tool) => tool.name),
+    ['mcp__flowus__create_page'],
+  );
+  // The raw name counts too, so either spelling finds the tool.
+  assert.deepEqual(
+    filterTools(tools, 'flowus_search').map((tool) => tool.name),
+    ['mcp__flowus__search_text'],
+  );
+  assert.deepEqual(filterTools(tools, 'keyword'), [tools[0]]);
+  assert.deepEqual(filterTools(tools, 'nothing'), []);
+
+  const model = statusViewModel(
+    snapshotOf({
+      tools: [
+        { name: 'a', rawName: 'a', description: 'alpha', readOnly: true },
+        { name: 'b', rawName: 'b', description: 'beta', readOnly: false },
+      ],
+    }),
+    t,
+    'alpha',
+  );
+  assert.equal(model.toolsShown.length, 1);
+  assert.equal(model.toolsTitle, 'Tools (2)');
+  assert.equal(model.toolsSummary, '1 of 2 shown');
+  assert.equal(model.toolsEmpty, false);
+  assert.equal(model.tools[0].readOnly, true);
+
+  const none = statusViewModel(snapshotOf({ tools: [{ name: 'a', rawName: 'a', description: 'alpha' }] }), t, 'zzz');
+  assert.equal(none.toolsEmpty, true);
+  assert.equal(none.toolsSummary, '0 of 1 shown');
+  assert.equal(none.query, 'zzz');
+});
+
+test('ages render through coarse, localized buckets', () => {
+  assert.deepEqual(timeAgo(1_000), { unit: 'now', count: 0 });
+  assert.deepEqual(timeAgo(5 * 60_000), { unit: 'minutes', count: 5 });
+  assert.deepEqual(timeAgo(3 * 3_600_000), { unit: 'hours', count: 3 });
+  assert.deepEqual(timeAgo(4 * 86_400_000), { unit: 'days', count: 4 });
+  assert.equal(describeAgo(t, 10_000), 'just now');
+  assert.equal(describeAgo(t, 5 * 60_000), '5 min ago');
+  assert.equal(describeAgo(t, Number.NaN), 'just now');
+});
+
+test('the view model carries relative times and the server version', () => {
+  const now = Date.parse('2026-10-11T22:30:00.000Z');
+  const model = statusViewModel(
+    snapshotOf({
+      authorization: { configured: true, scope: 'all', expiresAt: null, expired: null, hasRefreshToken: true },
+      connection: { connected: true, toolCount: 1, lastSyncAt: '2026-10-11T22:00:00.000Z', serverName: 'flowus', serverVersion: '1.0.0' },
+      login: {
+        phase: 'pending',
+        authorizationUrl: 'https://api.flowus.cn/oauth/authorize?x=1',
+        startedAt: now - 70_000,
+        finishedAt: null,
+        error: null,
+        toolCount: null,
+      },
+    }),
+    t,
+    '',
+    now,
+  );
+  const byKey = Object.fromEntries(model.facts.map((fact) => [fact.key, fact.value]));
+  assert.equal(byKey.version, '1.0.0');
+  assert.match(byKey.lastSync, /30 min ago/u);
+  assert.equal(model.loginElapsed, '1 min ago');
+  assert.equal(model.statePath, 'C:\\Users\\me\\.dsh\\flowus\\oauth.json');
+});
+
+test('the rendered tool list labels read-only and write tools', () => {
+  hookState = {
+    phase: 'ready',
+    snapshot: snapshotOf({
+      connection: { connected: true, toolCount: 2, lastSyncAt: null, serverName: 'flowus', serverVersion: null },
+      tools: [
+        { name: 'mcp__flowus__search_text', rawName: 'flowus_search_text', description: 'Search', readOnly: true },
+        { name: 'mcp__flowus__create_page', rawName: 'flowus_create_page', description: 'Create', readOnly: false },
+      ],
+    }),
+    error: undefined,
+  };
+  const rendered = collectText(FlowusSettingsPage({ t })).join('\n');
+  hookState = undefined;
+  assert.match(rendered, /read-only/u);
+  assert.match(rendered, /write/u);
+  assert.match(rendered, /Tools \(2\)/u);
 });

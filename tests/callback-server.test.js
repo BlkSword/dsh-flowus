@@ -29,16 +29,92 @@ test('an iss parameter is forwarded for RFC 9207 validation', async () => {
   }
 });
 
-test('a mismatched state is refused and fails the login', async () => {
-  const server = await startCallbackServer({ state: 's-3', port: 0 });
+test('a callback without this login attempt state is ignored, never accepted', async () => {
+  const server = await startCallbackServer({ state: 's-3', port: 0, log: () => {} });
   try {
-    const pending = assert.rejects(server.waitForCode(), /unexpected state/u);
-    const response = await get(`${server.redirectUrl}?code=c&state=attacker`);
-    assert.equal(response.status, 400);
-    await pending;
+    const refused = await get(`${server.redirectUrl}?code=c&state=attacker`);
+    assert.equal(refused.status, 400);
+    assert.match(await refused.text(), /ignored/iu);
+
+    // The rejection did not settle the login: the real redirect still lands.
+    const accepted = await get(`${server.redirectUrl}?code=the-code&state=s-3`);
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await server.waitForCode(), { code: 'the-code', state: 's-3', iss: undefined });
   } finally {
     await server.close();
   }
+});
+
+test('an error redirect without a matching state cannot cancel a pending login', async () => {
+  const server = await startCallbackServer({ state: 's-3b', port: 0, log: () => {} });
+  try {
+    // Any local process can reach loopback; before the state check this killed
+    // the login outright.
+    const refused = await get(`${server.redirectUrl}?error=access_denied&error_description=user+refused`);
+    assert.equal(refused.status, 400);
+
+    const accepted = await get(`${server.redirectUrl}?code=kept&state=s-3b`);
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await server.waitForCode(), { code: 'kept', state: 's-3b', iss: undefined });
+  } finally {
+    await server.close();
+  }
+});
+
+test('duplicated or missing single-value parameters are ignored', async () => {
+  const server = await startCallbackServer({ state: 's-3c', port: 0, log: () => {} });
+  try {
+    const duplicated = await get(`${server.redirectUrl}?code=a&code=b&state=s-3c`);
+    assert.equal(duplicated.status, 400);
+    const doublyStated = await get(`${server.redirectUrl}?code=a&state=s-3c&state=s-3c`);
+    assert.equal(doublyStated.status, 400);
+    const bare = await get(server.redirectUrl);
+    assert.equal(bare.status, 400);
+
+    const accepted = await get(`${server.redirectUrl}?code=the-code&state=s-3c`);
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await server.waitForCode(), { code: 'the-code', state: 's-3c', iss: undefined });
+  } finally {
+    await server.close();
+  }
+});
+
+test('only GET is accepted on the callback path', async () => {
+  const server = await startCallbackServer({ state: 's-3d', port: 0, log: () => {} });
+  try {
+    const posted = await fetch(server.redirectUrl, { method: 'POST', body: 'code=c&state=s-3d' });
+    assert.equal(posted.status, 405);
+    assert.equal(posted.headers.get('allow'), 'GET');
+
+    const accepted = await get(`${server.redirectUrl}?code=the-code&state=s-3d`);
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await server.waitForCode(), { code: 'the-code', state: 's-3d', iss: undefined });
+  } finally {
+    await server.close();
+  }
+});
+
+test('server-supplied error text reaches the page escaped and truncated', async () => {
+  const server = await startCallbackServer({ state: 's-3d2', port: 0, log: () => {} });
+  try {
+    const hostile = `<img src=x onerror=alert(1)>${'x'.repeat(500)}`;
+    const response = await get(`${server.redirectUrl}?error=${encodeURIComponent(hostile)}&state=s-3d2`);
+    const body = await response.text();
+    assert.equal(response.status, 400);
+    assert.ok(!body.includes('<img'), 'the injected tag must not survive as markup');
+    assert.match(body, /&lt;img/u);
+    assert.ok(body.length < 2_000, 'the echo is truncated');
+    await assert.rejects(server.waitForCode(), /authorization failed/u);
+  } finally {
+    await server.close();
+  }
+});
+
+test('a non-loopback callback host is refused', async () => {
+  await assert.rejects(
+    startCallbackServer({ state: 's-3e', port: 0, host: '0.0.0.0', log: () => {} }),
+    /loopback/u,
+  );
 });
 
 test('a missing code is refused', async () => {

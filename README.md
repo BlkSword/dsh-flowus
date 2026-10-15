@@ -9,7 +9,7 @@ DeepSeek Harness（DSH）的 FlowUs 集成插件。该插件在宿主进程内�
 - **浏览器授权。** 面向 FlowUs 官方 MCP 服务器完成 OAuth 2.1 授权码流程，回调地址为 `127.0.0.1` 上的 loopback 监听。访问令牌与刷新令牌保存在插件私有状态文件中，由插件自动续期。
 - **原生工具。** 将 FlowUs MCP 服务器公布的工具注册至 DSH 工具注册表，命名规则与 DSH 内置 MCP 桥一致，即 `mcp__flowus__<工具名>`。
 - **`/flowus` 命令。** 提供状态查询、授权、登出、工具列表、直接调用、重连与帮助。
-- **设置面板页面。** 在设置面板中提供独立的 FlowUs 页面，用于展示授权与连接状态，并执行授权、重连、登出等操作。
+- **设置面板页面。** 设置面板中的独立 FlowUs 页面：授权与连接状态、服务器版本、工具目录（可按名称或描述搜索，并标注只读/写入），以及授权、重连、登出、刷新操作；凭据路径与授权地址可一键复制，登录等待期间自动轮询，切回标签页时立即刷新。
 - **系统提示词段落。** 将服务器 instructions 与当前工具目录并入系统提示词；未授权时给出明确的操作指引。
 
 ## 背景
@@ -178,9 +178,12 @@ peer 依赖声明方式：`@deepseek-ai/dsh-*` 采用精确版本析取 `0.2.0-r
 ```
 
 - **令牌续期。** 运行时收到 401 时，SDK 使用刷新令牌续期并重试一次；仍失败则以“需要重新授权”的明确错误报告。插件记录令牌的获取时间与有效期，在连接前若判定已过期即先行刷新，以避免首次请求即返回 401。
-- **工具列表变更。** MCP 的 `notifications/tools/list_changed` 触发重新同步；同步采用整代替换，失败时保留上一代。
+- **工具列表变更。** MCP 的 `notifications/tools/list_changed` 触发重新同步：插件接管新列表并以整代替换重新注册，失败时保留上一代。
+- **会话自愈。** 服务器遗忘会话时（JSON-RPC `-32001`，或会话端点 404），插件自动重连一次、重新注册工具列表并重放当前调用，无需人工执行 `/flowus reload`。
 - **调用串行化。** FlowUs 服务端限制同一 MCP 会话同时仅允许一个工具调用（并发调用返回 JSON-RPC `-32002`）。插件在会话内以串行队列执行调用，并对并发拒绝执行有限次退避重试，因此模型并行发起多个只读调用不会失败（验证结果：5 个并发调用全部成功）。
 - **命名冲突。** 若 `mcp__flowus__*` 已被其他插件占用，则该次同步整体拒绝，不产生部分发布。
+- **回调校验。** 回调监听只接受 `GET`，并要求唯一且匹配的 `state`（常量时间比较）；不满足者只作答、不结束登录，因此本机任意进程或页面无法取消进行中的授权。监听地址强制为 loopback（RFC 8252 §7.3），帮助页回显的服务器文本经转义并截断。
+- **凭据绑定。** 存储的凭据记录其所属资源 URL；当配置的 `serverUrl` 指向另一资源时，插件拒绝出示令牌并提示重新授权，而不会把 FlowUs 令牌发给第三方端点。
 - **设置页实现。** 宿主侧通过 `ctx.webServer.register` 注册 `/flowus/api/*`；客户端侧为 `window.__ModuleLoader__` 形式的 classic script（`lib/client.js`，无需构建步骤），注册至 `settings.section` 槽位；两侧通过 `fetch` 与 JSON 快照通信，未引入自定义 RPC 协议。
 
 ## 开发与测试
@@ -193,7 +196,7 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # 离线套件：115 项用例，112 项通过，3 项联网用例跳过
+npm test                                            # 离线套件：135 项用例，132 项通过，3 项联网用例跳过
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟：3 项
 ```
 
