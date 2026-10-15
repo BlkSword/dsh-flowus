@@ -78,6 +78,8 @@ test('the config schema applies defaults and rejects invalid values', () => {
   assert.equal(defaults.callbackPath, '/callback');
   assert.equal(defaults.toolCallTimeoutMs, 60_000);
   assert.equal(defaults.promptSection, true);
+  assert.equal(defaults.maxResultChars, 32_000);
+  assert.equal(defaults.deferToolLoading, false);
   assert.throws(() => plugin.Config({ serverName: 'not a namespace' }));
   assert.throws(() => plugin.Config({ callbackPort: 70_000 }));
   // RFC 8252 §7.3: the OAuth redirect may only be loopback.

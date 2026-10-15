@@ -7,7 +7,10 @@ import {
   buildParameterSpec,
   convertJsonSchemaToValueSpec,
   describeTool,
+  humanToolLabel,
+  presentCallTitle,
   renderCallResult,
+  toolCallKind,
 } from '../lib/tool-bridge.js';
 
 test('the output contract compiles to a schema the harness enforces', () => {
@@ -160,6 +163,91 @@ test('a tool definition is namespaced, calls the raw name, and validates args', 
   assert.deepEqual(calls, [{ rawName: 'search_pages', args: { query: 'weekly' } }]);
   assert.deepEqual(value, { text: 'two hits', blocks: [{ type: 'text', text: 'two hits' }], isError: false });
   assert.deepEqual(built.definition.output.render({ query: 'weekly' }, value), [{ type: 'text', text: 'two hits' }]);
+});
+
+test('an oversized structured result is bounded in the rendered block', () => {
+  const value = { text: '', blocks: [], structuredContent: { blob: 'x'.repeat(50_000) }, isError: false };
+  const blocks = renderCallResult(value, 1_000);
+  assert.equal(blocks.length, 1);
+  assert.match(blocks[0].text, /characters omitted/u);
+  assert.ok(blocks[0].text.length < 2_000);
+  // The default budget leaves a normal result untouched.
+  const small = renderCallResult({ text: 'ok', blocks: [], structuredContent: { a: 1 }, isError: false });
+  assert.deepEqual(small, [
+    { type: 'text', text: 'ok' },
+    { type: 'text', text: '\n\n{\n  "a": 1\n}' },
+  ]);
+});
+
+test('every published tool carries a readable call card', () => {
+  const [search, create] = buildFlowusToolDefinitions({
+    serverName: 'flowus',
+    toolCallTimeoutMs: 1_000,
+    tools: [
+      { name: 'flowus_search_text', description: 'Search', inputSchema: { type: 'object', properties: { query: { type: 'string' } } }, annotations: { readOnlyHint: true } },
+      { name: 'flowus_create_page', description: 'Create', inputSchema: { type: 'object', properties: { parent_id: { type: 'string' } } }, annotations: { readOnlyHint: false } },
+    ],
+    callTool: async () => ({ text: '', blocks: [], isError: false }),
+  });
+
+  assert.deepEqual(search.definition.presentCall({ query: 'weekly report' }), {
+    card: 'generic',
+    kind: 'search',
+    title: 'FlowUs · search text: weekly report',
+  });
+  // No hint argument: the card still says what the call is.
+  assert.deepEqual(create.definition.presentCall({}), {
+    card: 'generic',
+    kind: 'edit',
+    title: 'FlowUs · create page',
+  });
+  assert.equal(create.definition.presentCall({ parent_id: 'abc123' }).title, 'FlowUs · create page: abc123');
+});
+
+test('the call-card kind follows the tool name, not only the read-only hint', () => {
+  const build = (name, readOnly) =>
+    buildFlowusToolDefinitions({
+      serverName: 'flowus',
+      toolCallTimeoutMs: 1_000,
+      tools: [{ name, description: name, inputSchema: { type: 'object' }, annotations: { readOnlyHint: readOnly } }],
+      callTool: async () => ({ text: '', blocks: [], isError: false }),
+    })[0].definition.presentCall({}).kind;
+
+  assert.equal(build('flowus_search_semantic', true), 'search');
+  assert.equal(build('flowus_fetch', true), 'fetch');
+  assert.equal(build('flowus_get_page', true), 'read');
+  assert.equal(build('flowus_list_pages', true), 'read');
+  assert.equal(build('flowus_edit_page_text', false), 'edit');
+  // An unknown verb falls back to the server's own hint.
+  assert.equal(build('flowus_weird_thing', true), 'read');
+  assert.equal(build('flowus_weird_thing', false), 'edit');
+});
+
+test('the card helpers are pure and reusable', () => {
+  assert.equal(humanToolLabel('flowus_get_page_markdown'), 'get page markdown');
+  assert.equal(presentCallTitle('flowus_search_text', { query: ['a', 'b'] }), 'FlowUs · search text: a, b');
+  assert.equal(presentCallTitle('flowus_get_page', { page_id: 'p1' }), 'FlowUs · get page: p1');
+  assert.equal(presentCallTitle('flowus_get_page', { page_id: 'x'.repeat(200) }).length, 'FlowUs · get page: '.length + 60);
+  assert.equal(presentCallTitle('flowus_get_page', null), 'FlowUs · get page');
+  assert.equal(toolCallKind('flowus_help', true), 'read');
+});
+
+test('deferred loading is opt-in and lands on every definition', () => {
+  const tools = [
+    { name: 'flowus_help', description: 'Help', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'flowus_create_page', description: 'Create', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+  ];
+  const eager = buildFlowusToolDefinitions({ serverName: 'flowus', toolCallTimeoutMs: 1_000, tools, callTool: async () => ({ text: '', blocks: [], isError: false }) });
+  for (const built of eager) assert.equal(built.definition.deferLoading, undefined, 'off by default');
+
+  const deferred = buildFlowusToolDefinitions({
+    serverName: 'flowus',
+    toolCallTimeoutMs: 1_000,
+    tools,
+    deferLoading: true,
+    callTool: async () => ({ text: '', blocks: [], isError: false }),
+  });
+  for (const built of deferred) assert.equal(built.definition.deferLoading, true);
 });
 
 test('a server-side error result fails the call', async () => {

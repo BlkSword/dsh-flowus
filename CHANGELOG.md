@@ -39,6 +39,25 @@ All notable changes to this plugin are documented here. The format follows
   ancestor and a trailing slash, and never confuses a look-alike host or a
   sibling path.
 
+### Added
+
+- **A bound on what one result forwards.** `maxResultChars` (default 32,000)
+  keeps the head and the tail of an oversized result and states exactly how much
+  was dropped, so a reader can tell truncation from a short answer and ask for a
+  narrower query; the structured-content projection is bounded the same way, and
+  an oversized inline payload (a base64 image or blob) is replaced by its size in
+  the stored raw blocks. `0` disables the bound.
+- **Readable call cards.** Every published tool now supplies `presentCall`: the
+  card kind separates searches and reads from the calls that change the
+  workspace, and the title names the subject of the call instead of dumping its
+  arguments.
+- **`deferToolLoading` (off by default).** Publishes the tools with the
+  harness's deferred-loading flag, which the DeepSeek route forwards as
+  `defer_loading`; a route without tool-update support strips the flag and sends
+  the full list, so enabling it can never be worse than the current behaviour.
+  The measured catalogue payload it covers: 41 tools, 20,393 characters, about
+  8,424 estimated tokens per request.
+
 ### Fixed
 
 - **A lost MCP session heals itself.** The FlowUs server forgets a session it no

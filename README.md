@@ -151,6 +151,8 @@ peer 依赖声明方式：`@deepseek-ai/dsh-*` 采用精确版本析取 `0.2.0-r
 | `openBrowser` | `true` | 是否自动打开默认浏览器 |
 | `toolCallTimeoutMs` | `60000` | 单次工具调用超时 |
 | `maxTools` | `128` | 发布工具的数量上限（`0` 表示不限制） |
+| `maxResultChars` | `32000` | 单次工具结果转发给模型的字符上限，超出时保留首尾并注明省略量（`0` 表示不限制） |
+| `deferToolLoading` | `false` | 以「延迟加载」发布 FlowUs 工具：在支持该能力的路由上，schema 以 `defer_loading` 声明而不进入常驻上下文；不支持的路由会自动忽略该标记 |
 | `promptSection` | `true` | 是否将 FlowUs 说明与服务器 instructions 并入系统提示词 |
 
 ## 凭据与安全
@@ -180,6 +182,7 @@ peer 依赖声明方式：`@deepseek-ai/dsh-*` 采用精确版本析取 `0.2.0-r
 - **令牌续期。** 运行时收到 401 时，SDK 使用刷新令牌续期并重试一次；仍失败则以“需要重新授权”的明确错误报告。插件记录令牌的获取时间与有效期，在连接前若判定已过期即先行刷新，以避免首次请求即返回 401。
 - **工具列表变更。** MCP 的 `notifications/tools/list_changed` 触发重新同步：插件接管新列表并以整代替换重新注册，失败时保留上一代。
 - **会话自愈。** 服务器遗忘会话时（JSON-RPC `-32001`，或会话端点 404），插件自动重连一次、重新注册工具列表并重放当前调用，无需人工执行 `/flowus reload`。
+- **结果上界与调用卡片。** 单个结果转发给模型前按 `maxResultChars` 截断：保留首尾并注明省略了多少字符，结构化内容同样受限，超大内联负载（base64 图片/blob）在保存的原始块中以大小占位。每个工具还提供调用卡片：`kind` 区分读取/搜索与写入，标题给出本次调用的对象。
 - **调用串行化。** FlowUs 服务端限制同一 MCP 会话同时仅允许一个工具调用（并发调用返回 JSON-RPC `-32002`）。插件在会话内以串行队列执行调用，并对并发拒绝执行有限次退避重试，因此模型并行发起多个只读调用不会失败（验证结果：5 个并发调用全部成功）。
 - **命名冲突。** 若 `mcp__flowus__*` 已被其他插件占用，则该次同步整体拒绝，不产生部分发布。
 - **回调校验。** 回调监听只接受 `GET`，并要求唯一且匹配的 `state`（常量时间比较）；不满足者只作答、不结束登录，因此本机任意进程或页面无法取消进行中的授权。监听地址强制为 loopback（RFC 8252 §7.3），帮助页回显的服务器文本经转义并截断。
@@ -196,7 +199,7 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # 离线套件：135 项用例，132 项通过，3 项联网用例跳过
+npm test                                            # 离线套件：149 项用例，146 项通过，3 项联网用例跳过
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟：3 项
 ```
 

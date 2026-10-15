@@ -112,6 +112,8 @@ test('a bridged tool registers on the real registry and executes end to end', as
       assert.deepEqual(schema.parameters.required, ['query']);
       assert.equal(schema.parameters.properties.query.type, 'string');
       assert.match(schema.description, /Search FlowUs pages/u);
+      assert.equal(schema.deferLoading, undefined, 'eager by default');
+      assert.equal(typeof ctx.tools.get('mcp__flowus__search_pages').presentCall, 'function', 'the call card is registered');
 
       const result = await ctx.tools.execute({
         callId: /** @type {any} */ ('call-1'),
@@ -136,6 +138,28 @@ test('a bridged tool registers on the real registry and executes end to end', as
       unregister();
     }
     assert.equal(ctx.tools.get('mcp__flowus__search_pages'), undefined, 'unregistered on disposal');
+  } finally {
+    await dispose();
+  }
+});
+
+test('a deferred generation reaches the model-facing schema as deferred', async () => {
+  const { ctx, dispose } = await boot();
+  try {
+    const [built] = buildFlowusToolDefinitions({
+      serverName: 'flowus',
+      toolCallTimeoutMs: 5_000,
+      deferLoading: true,
+      tools: [{ name: 'search_pages', description: 'Search FlowUs pages', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }],
+      callTool: async () => ({ text: '', blocks: [], isError: false }),
+    });
+    const unregister = ctx.tools.register(built.definition);
+    try {
+      const schema = ctx.tools.schemas().find((entry) => entry.name === 'mcp__flowus__search_pages');
+      assert.equal(schema.deferLoading, true);
+    } finally {
+      unregister();
+    }
   } finally {
     await dispose();
   }

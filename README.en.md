@@ -151,6 +151,8 @@ Configuration is supplied by a profile patch layer (`$DSH_HOME/profiles/web/cord
 | `openBrowser` | `true` | Whether to open the default browser automatically |
 | `toolCallTimeoutMs` | `60000` | Timeout for a single tool call |
 | `maxTools` | `128` | Upper bound on published tools (`0` disables the bound) |
+| `maxResultChars` | `32000` | Character ceiling for one tool result forwarded to the model; over it the head and tail survive with a stated omission (`0` disables the bound) |
+| `deferToolLoading` | `false` | Publish the FlowUs tools as deferred: on a route that supports it the schemas are declared with `defer_loading` instead of entering the always-on context; a route without support ignores the flag |
 | `promptSection` | `true` | Whether to contribute the FlowUs guidance and server instructions to the system prompt |
 
 ## Credentials and security
@@ -181,6 +183,7 @@ Configuration is supplied by a profile patch layer (`$DSH_HOME/profiles/web/cord
 - **Token renewal.** On a runtime 401 the SDK refreshes the token with the stored refresh token and retries once; if the retry still fails, the plugin reports an explicit "re-authorization required" error. The plugin records the acquisition time and lifetime of the token set and refreshes before connecting when the access token is already stale, so the first request does not have to fail with 401.
 - **Tool-list changes.** `notifications/tools/list_changed` triggers a re-synchronization: the plugin adopts the new list and re-registers the whole generation, keeping the previous one when a re-registration fails.
 - **Session self-healing.** When the server has forgotten the session (JSON-RPC `-32001`, or a 404 from the session endpoint), the plugin reconnects once, re-registers the tool list and replays the call in flight, so no manual `/flowus reload` is required.
+- **Result bound and call cards.** One result is truncated to `maxResultChars` before it reaches the model: the head and tail survive with the dropped character count stated, structured content is bounded the same way, and an oversized inline payload (a base64 image or blob) is replaced by its size in the stored raw blocks. Each tool also supplies a call card whose `kind` separates reads and searches from writes and whose title names the subject of the call.
 - **Serialized invocation.** The FlowUs server permits only one in-flight tool call per MCP session; a concurrent call is answered with JSON-RPC `-32002`. The plugin therefore executes calls through a single serial queue and additionally retries a concurrency rejection with bounded backoff, so parallel read-only scheduling by the model does not fail (measured: five concurrent calls, all successful).
 - **Naming conflicts.** If an `mcp__flowus__*` name is already owned by another plugin, the entire synchronization is refused and no partial generation is published.
 - **Callback validation.** The callback listener accepts `GET` only and requires exactly one `state` that matches its own (compared in constant time). A request that fails either check is answered and then ignored — it never settles the login — so no local process or page can cancel an authorization in progress. The listener is bound to loopback only (RFC 8252 §7.3), and server-supplied error text reaches the browser escaped and truncated.
@@ -197,7 +200,7 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # offline suite: 135 tests, 132 passed, 3 live tests skipped
+npm test                                            # offline suite: 149 tests, 146 passed, 3 live tests skipped
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # live smoke tests: 3
 ```
 

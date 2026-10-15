@@ -101,7 +101,7 @@ test('several blocks join in order and non-text blocks leave a marker', () => {
   assert.equal(lines[4], 'embedded');
   assert.match(lines[5], /binary content omitted/u);
   assert.match(lines[6], /unsupported content block weird/u);
-  assert.equal(value.blocks.length, 7, 'raw blocks are preserved verbatim');
+  assert.equal(value.blocks.length, 7, 'the raw blocks come through while their payloads are small');
 });
 
 test('an isError result is flagged but still normalized', () => {
@@ -113,6 +113,33 @@ test('an isError result is flagged but still normalized', () => {
 test('a result with no content normalizes to empty text', () => {
   assert.deepEqual(normalizeCallToolResult({ content: [] }), { text: '', blocks: [], isError: false });
   assert.deepEqual(normalizeCallToolResult(undefined), { text: '', blocks: [], isError: false });
+});
+
+test('an oversized result text keeps its ends and states what was dropped', () => {
+  const text = 'a'.repeat(10_000) + 'z'.repeat(10_000);
+  const value = normalizeCallToolResult({ content: [{ type: 'text', text }] }, { maxTextChars: 1_000 });
+
+  assert.ok(value.text.length < text.length);
+  assert.match(value.text, /characters omitted/u);
+  assert.ok(value.text.startsWith('a'));
+  assert.ok(value.text.endsWith('z'));
+  assert.equal(value.blocks[0].text, text, 'the raw block is untouched while it is small enough');
+});
+
+test('an oversized inline payload is replaced by its size, not carried on', () => {
+  const data = 'A'.repeat(3_000);
+  const value = normalizeCallToolResult({ content: [{ type: 'image', mimeType: 'image/png', data }] }, { maxInlineChars: 1_000 });
+
+  assert.equal(value.blocks[0].data, '');
+  assert.equal(value.blocks[0].omittedBytes, 3_000);
+  assert.equal(value.blocks[0].mimeType, 'image/png');
+  assert.match(value.text, /image\/png/u);
+});
+
+test('a small block is passed through by identity, never copied', () => {
+  const block = { type: 'text', text: 'hi' };
+  const value = normalizeCallToolResult({ content: [block] });
+  assert.equal(value.blocks[0], block);
 });
 
 test('the server concurrency rejection is recognized in every shape it arrives', () => {
