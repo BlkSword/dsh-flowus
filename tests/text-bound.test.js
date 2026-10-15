@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DEFAULT_MAX_TEXT_CHARS, capText } from '../lib/text-bound.js';
+import { DEFAULT_MAX_TEXT_CHARS, boundServerInstructions, capText } from '../lib/text-bound.js';
 
 /** @param {string} text @returns {boolean} whether any surrogate is unpaired. */
 function hasLoneSurrogate(text) {
@@ -57,4 +57,17 @@ test('a cut never splits a surrogate pair', () => {
     const capped = capText(text, budget);
     assert.equal(hasLoneSurrogate(capped), false, `budget ${budget}`);
   }
+});
+
+test('server instructions are bounded and the truncation is reported', () => {
+  assert.deepEqual(boundServerInstructions('use flowus_help first'), { text: 'use flowus_help first', truncated: false });
+  assert.deepEqual(boundServerInstructions(undefined), { text: '', truncated: false });
+  assert.deepEqual(boundServerInstructions({ injected: true }), { text: '', truncated: false });
+  assert.deepEqual(boundServerInstructions('kept as is', 0), { text: 'kept as is', truncated: false });
+
+  const huge = boundServerInstructions('i'.repeat(50_000), 1_000);
+  assert.equal(huge.truncated, true);
+  assert.ok(huge.text.length < 2_000);
+  assert.match(huge.text, /characters omitted/u);
+  assert.equal(hasLoneSurrogate(huge.text), false);
 });

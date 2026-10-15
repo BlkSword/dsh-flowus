@@ -38,6 +38,11 @@ All notable changes to this plugin are documented here. The format follows
   endpoint the configuration now names. `sameResourceUrl` tolerates a path
   ancestor and a trailing slash, and never confuses a look-alike host or a
   sibling path.
+- **The server does not get to size the system prompt.** Its instructions are
+  bounded by `maxInstructionChars` (default 32,000, the same ceiling the stock
+  MCP bridge applies at 32 KiB), truncating with a stated omission and a warning
+  instead of letting a hostile or broken server exhaust the context window; the
+  section that carries them now labels them as server-provided data.
 
 ### Added
 

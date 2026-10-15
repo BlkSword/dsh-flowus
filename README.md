@@ -153,6 +153,7 @@ peer 依赖声明方式：`@deepseek-ai/dsh-*` 采用精确版本析取 `0.2.0-r
 | `maxTools` | `128` | 发布工具的数量上限（`0` 表示不限制） |
 | `maxResultChars` | `32000` | 单次工具结果转发给模型的字符上限，超出时保留首尾并注明省略量（`0` 表示不限制） |
 | `deferToolLoading` | `false` | 以「延迟加载」发布 FlowUs 工具：在支持该能力的路由上，schema 以 `defer_loading` 声明而不进入常驻上下文；不支持的路由会自动忽略该标记 |
+| `maxInstructionChars` | `32000` | 服务器 instructions 进入系统提示词前的字符上限，超出部分截断并在日志中提示（`0` 表示不限制） |
 | `promptSection` | `true` | 是否将 FlowUs 说明与服务器 instructions 并入系统提示词 |
 
 ## 凭据与安全
@@ -199,7 +200,7 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # 离线套件：149 项用例，146 项通过，3 项联网用例跳过
+npm test                                            # 离线套件：150 项用例，147 项通过，3 项联网用例跳过
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟：3 项
 ```
 

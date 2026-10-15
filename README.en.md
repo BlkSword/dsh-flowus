@@ -153,6 +153,7 @@ Configuration is supplied by a profile patch layer (`$DSH_HOME/profiles/web/cord
 | `maxTools` | `128` | Upper bound on published tools (`0` disables the bound) |
 | `maxResultChars` | `32000` | Character ceiling for one tool result forwarded to the model; over it the head and tail survive with a stated omission (`0` disables the bound) |
 | `deferToolLoading` | `false` | Publish the FlowUs tools as deferred: on a route that supports it the schemas are declared with `defer_loading` instead of entering the always-on context; a route without support ignores the flag |
+| `maxInstructionChars` | `32000` | Character ceiling for the server's own instructions before they enter the system prompt; the rest is truncated and reported in the log (`0` disables the bound) |
 | `promptSection` | `true` | Whether to contribute the FlowUs guidance and server instructions to the system prompt |
 
 ## Credentials and security
@@ -200,7 +201,7 @@ npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @mod
 New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
   -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
 
-npm test                                            # offline suite: 149 tests, 146 passed, 3 live tests skipped
+npm test                                            # offline suite: 150 tests, 147 passed, 3 live tests skipped
 $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # live smoke tests: 3
 ```
 
