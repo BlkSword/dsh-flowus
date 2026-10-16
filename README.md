@@ -83,6 +83,12 @@ peer 依赖声明方式：`@deepseek-ai/dsh-*` 采用精确版本析取 `0.2.0-r
 
 该矩阵经实测确认：离线套件与联网冒烟测试分别在三个运行时自带的包上执行，均无失败；插件涉及的具名导出集合在三个版本间完全一致。alpha 版本的范围分支为必需项：预发布版本仅在比较符于同一 `major.minor.patch` 上带预发布标识时才满足范围，因此 `~4.0.4` 不接受 `4.0.5-alpha.1`，`0.2.0-rc.2` 亦不接受 `0.2.1-alpha.1`。
 
+**未列入声明的新版本（实测记录）。** `@deepseek-ai/dsh@0.2.1-alpha.3` 与 `alpha.4` 已发布，本插件暂不声明支持：
+
+- **宿主半层已在 alpha.3 上实测通过。** 在一份完整安装的 alpha.3 运行时（609 个包，peer 闭包齐全）上运行本仓库全部用例：164 项、161 通过、0 失败、3 项联网跳过，与 `0.2.0-rc.2` 结果一致。该运行时配对的 `cordis@4.0.5-alpha.2`、`schemastery@3.18.5-alpha.2`、`dsh-tools@0.2.1-alpha.3` 均落在现有 `~` 与精确析取范围内，无需修改声明。
+- **客户端半层尚未验证。** alpha 线不再把 `@deepseek-ai/dsh-client-ui-primitives` 作为运行时的依赖包（`node_modules\@deepseek-ai` 下已无此包），而设置页的 classic script 需要从 shell 的模块表 `require` 它；alpha.3 的 shell bundle 中仍可见该模块 id，故结论未定。列入支持前，需要在 alpha.3 上真正打开一次设置页确认。
+- `@deepseek-ai/dsh-atomic-write` 已加入 peer 集合（可选）：存在时用于状态文件的原子写与跨进程文件锁。
+
 ## 首次授权
 
 ```
@@ -158,7 +164,7 @@ peer 依赖声明方式：`@deepseek-ai/dsh-*` 采用精确版本析取 `0.2.0-r
 
 ## 凭据与安全
 
-- 凭据文件位于 `%DSH_HOME%\flowus\oauth.json`（默认 `C:\Users\<用户名>\.dsh\flowus\oauth.json`），内容包括动态注册的 `client_id`、令牌集合、PKCE verifier 与 discovery 缓存。写入采用“临时文件 + rename”的原子替换方式，权限按平台能力设置为 `0600`。
+- 凭据文件位于 `%DSH_HOME%\flowus\oauth.json`（默认 `C:\Users\<用户名>\.dsh\flowus\oauth.json`），内容包括动态注册的 `client_id`、令牌集合、PKCE verifier 与 discovery 缓存。写入优先使用宿主提供的 `@deepseek-ai/dsh-atomic-write`（随机后缀 + `wx` 独占创建 + rename，并以文件锁串行化跨进程的读-改-写；该 peer 声明为可选，缺失时回退到等价的本地实现），权限按平台能力设置为 `0600`。登出会顺带清理残留的 `<file>.*.tmp` 与 `<file>.corrupt`。
 - 客户端类型为 public client：`token_endpoint_auth_method = "none"`，配合 PKCE S256，不存在 client secret；刷新令牌是唯一的长期凭据。
 - `logout` 仅清除令牌与 verifier，保留动态客户端注册。注册端点限流较严格（实测响应头 `X-RateLimit-Limit: 3`），复用注册可避免重复登录时触发限流。
 - 涉及的网络端点：`mcp.flowus.cn`（资源元数据与 MCP 数据面）、`api.flowus.cn`（授权、令牌、注册）。
@@ -192,19 +198,19 @@ peer 依赖声明方式：`@deepseek-ai/dsh-*` 采用精确版本析取 `0.2.0-r
 
 ## 开发与测试
 
-本地开发需具备以下两项前提（`node_modules` 不入库）：
+本地开发从锁文件安装，再把一份 DSH 运行时链接进来（`node_modules` 不入库）：
 
 ```powershell
-npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @modelcontextprotocol/client@^2.2.0
-# 使 node --test 能够加载真实的 dsh-tools / schemastery：指向 DSH 安装内的同名目录
-New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
-  -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
+npm ci --ignore-scripts --legacy-peer-deps                    # 按锁文件安装（含 typescript / @types/node）
+npm install --no-save --no-package-lock --ignore-scripts --legacy-peer-deps @deepseek-ai/dsh@0.2.0-rc.2
+npm run link-runtime                                          # 逐包软链到上面这份运行时
 
-npm test                                            # 离线套件：150 项用例，147 项通过，3 项联网用例跳过
-$env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟：3 项
+npm run check                                                 # 类型检查 + 离线套件：164 项用例，161 项通过，3 项联网用例跳过
+npm audit                                                     # 有锁文件后才能审计依赖
+$env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js  # 联网冒烟：3 项
 ```
 
-> **顺序不能颠倒。** 必须先执行 `npm install`，再建 junction：npm 会把 junction 内的 `@deepseek-ai/*` 当作多余依赖，顺着链接把它们从 DSH 安装里删掉。已有 junction 时要更新依赖，先 `cmd /c rmdir node_modules\@deepseek-ai` 摘掉链接，装完再重建。
+> **链接方式与顺序。** `scripts/link-runtime-packages.mjs` 为每个 `@deepseek-ai/*` 包各建一条软链（Windows 用 junction），而不是把整个 scope 目录链成一个。实测差别：`npm install` 会删掉逐包软链本身、但**保留**其指向的真实包；整目录 junction 则会让 npm 穿过链接删掉运行时里的包（本仓库被这样毁过一次）。顺序上仍是**先跑完所有 npm 命令、再链接**；链接之后任何 npm/pnpm 命令都要重跑 `npm run link-runtime`。
 
 测试构成：
 
@@ -212,11 +218,13 @@ $env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # 联网冒烟�
 | --- | --- |
 | `tests/tool-names.test.js` | 工具命名契约（与官方 MCP 桥一致） |
 | `tests/command-grammar.test.js` | `/flowus` 语法解析 |
-| `tests/store.test.js` | 状态文件的原子写入、串行化与损坏处理 |
+| `tests/store.test.js` | 状态文件的原子写入（宿主原语与本地回退）、跨实例串行、损坏隔离与残留清理 |
 | `tests/oauth-provider.test.js` | `OAuthClientProvider` 语义、issuer 绑定（凭据不跨授权服务器出示）与状态裁剪 |
 | `tests/callback-server.test.js` | 回调校验（state、code、error、端口回退、abort） |
+| `tests/login.test.js` | 两条腿的授权交换（注入 `authImpl`，不触网）：成功、已授权短路、无授权 URL、未完成交换、浏览器关闭、取消、超时、redirect 变更失效 |
 | `tests/browser.test.js` | 不依赖 shell 的浏览器启动与候选回退 |
 | `tests/tool-bridge.test.js` | MCP JSON Schema 至 DSH 参数 DSL 的转换与输出契约（以 DSH 自身的 schema 编译器校验） |
+| `tests/text-bound.test.js` | 结果与 instructions 的截断边界：保留首尾、注明省略量、不劈开代理对、`0` 表示不限制 |
 | `tests/http-api.test.js` | 设置页宿主 API：信任栅栏、方法校验、`{ ok, snapshot }` 封装与错误路径 |
 | `tests/client-bundle.test.js` | 浏览器半：`__ModuleLoader__` 注册契约、中英文字典键一致性、槽位注册、与宿主路由的路径交叉校验、视图模型分支与完整渲染 |
 | `tests/mcp-session.test.js` | 结果归一化、并发拒绝识别、串行队列（顺序、并发上限、失败不影响后续）与授权错误分类 |

@@ -77,6 +77,21 @@ function collectText(node, out = []) {
   return out;
 }
 
+/** Collect every Tag in a (stubbed) element tree as `{ tone, label }`. */
+function collectTags(node, out = []) {
+  if (!node || typeof node !== 'object') return out;
+  if (Array.isArray(node)) {
+    for (const child of node) collectTags(child, out);
+    return out;
+  }
+  if (!('props' in node)) return out;
+  if (node.type === fakePrimitives.Tag) {
+    out.push({ tone: node.props.tone, label: collectText(node.props.children).join('') });
+  }
+  collectTags(node.props.children, out);
+  return out;
+}
+
 const snapshotOf = (overrides = {}) => ({
   plugin: { name: '@blksword/dsh-flowus', version: '0.1.0', serverName: 'flowus' },
   server: {
@@ -429,9 +444,22 @@ test('the rendered tool list labels read-only and write tools', () => {
     }),
     error: undefined,
   };
-  const rendered = collectText(FlowusSettingsPage({ t })).join('\n');
+  const tree = FlowusSettingsPage({ t });
   hookState = undefined;
+  const rendered = collectText(tree).join('\n');
   assert.match(rendered, /read-only/u);
   assert.match(rendered, /write/u);
   assert.match(rendered, /Tools \(2\)/u);
+
+  // Every label needs a filled capsule: the primitives' `quiet` tone sets no
+  // background, which is how the read-only tag once rendered as bare text.
+  const tags = collectTags(tree);
+  assert.deepEqual(
+    tags.map((tag) => [tag.tone, tag.label]),
+    [
+      ['neutral', 'read-only'],
+      ['warning', 'write'],
+    ],
+  );
+  for (const tag of tags) assert.notEqual(tag.tone, 'quiet', 'quiet has no fill');
 });

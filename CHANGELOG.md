@@ -24,7 +24,6 @@ All notable changes to this plugin are documented here. The format follows
   binding holds even for a caller that drives the provider with an SDK version
   predating the fix. The user is asked to sign in again instead of leaking a
   refresh token to a different authorization server.
-
 - **A loopback callback request can no longer cancel a login.** The listener now
   validates the login attempt's `state` *before* it looks at `error` (constant
   time, exactly one value), accepts `GET` only, ignores a callback it cannot
@@ -43,6 +42,14 @@ All notable changes to this plugin are documented here. The format follows
   MCP bridge applies at 32 KiB), truncating with a stated omission and a warning
   instead of letting a hostile or broken server exhaust the context window; the
   section that carries them now labels them as server-provided data.
+- **The state file uses the harness's own write primitives when present.**
+  `@deepseek-ai/dsh-atomic-write` (an optional peer) supplies a random-suffix
+  sibling opened with exclusive create, a rename commit and a cross-process
+  writer lock, so two DSH processes sharing one `DSH_HOME` can no longer
+  resurrect a state the other just replaced — a rotated refresh token lost that
+  way signs the user out. A host without the primitives keeps an equivalent local
+  implementation, and logout prunes the temporary and quarantined siblings a
+  failure may have left behind.
 
 ### Added
 
@@ -62,6 +69,27 @@ All notable changes to this plugin are documented here. The format follows
   the full list, so enabling it can never be worse than the current behaviour.
   The measured catalogue payload it covers: 41 tools, 20,393 characters, about
   8,424 estimated tokens per request.
+- **A development baseline that runs in CI.** `npm run typecheck` checks the
+  shipped JSDoc through `tsc` (`jsconfig.json` plus `typescript` and
+  `@types/node` as devDependencies), `npm run check` is now what
+  `prepublishOnly` runs, a committed `package-lock.json` makes `npm audit`
+  possible at all — the missing lockfile is why the vulnerable
+  `@modelcontextprotocol/client` pin went unnoticed — and
+  `.github/workflows/ci.yml` runs the typecheck and the suite against every
+  declared DSH release.
+- **`scripts/link-runtime-packages.mjs` links each `@deepseek-ai/*` package
+  individually**, replacing the whole-scope junction the README used to
+  prescribe. Measured difference under an accidental `npm install`: the
+  individual links are deleted while the packages they point at survive, whereas
+  the whole-scope junction lets npm walk through it and delete the packages
+  inside the runtime.
+- **Offline coverage of the authorization exchange.** `lib/login.js` gains a
+  documented `authImpl` seam (defaulting to the SDK's `auth`) and
+  `tests/login.test.js` covers both legs, cancellation, timeout, the
+  already-authorized short circuit and stale-redirect invalidation without a
+  network. `lib/login.js` goes from 36.5% to 96.5% of lines and
+  `lib/mcp-session.js` from 43.9% to 93.7%; the suite as a whole reaches 94.1%
+  over 164 tests.
 
 ### Fixed
 
@@ -75,6 +103,10 @@ All notable changes to this plugin are documented here. The format follows
   notification previously updated a cached list nothing read, while the README
   claimed a re-sync; the session now hands the refreshed list to the plugin,
   which replaces the generation through the same path as `/flowus reload`.
+- **The read-only tool label renders as a filled capsule.** It used the
+  primitives' `quiet` tone, which sets no background, so next to the write tag it
+  read as bare text; the neutral capsule is used instead, and the render test now
+  asserts the tone rather than only the label text.
 
 ### Changed
 
@@ -90,7 +122,17 @@ All notable changes to this plugin are documented here. The format follows
 ### Compatibility
 
 - Unchanged: DSH `0.2.0-rc.2`, `0.2.1-alpha.1`, `0.2.1-alpha.2`; the same peer
-  ranges as `0.1.0`.
+  ranges as `0.1.0`, plus the new optional `@deepseek-ai/dsh-atomic-write` peer.
+- **`0.2.1-alpha.3` is verified for the host half but not claimed.** On a
+  complete alpha.3 runtime (609 packages, peer closure resolved) all 164 offline
+  tests pass exactly as on `0.2.0-rc.2`, and the alpha.3 pairings
+  (`cordis@4.0.5-alpha.2`, `schemastery@3.18.5-alpha.2`,
+  `dsh-tools@0.2.1-alpha.3`) already fall inside the declared ranges. The client
+  half is unverified: the alpha line no longer ships
+  `@deepseek-ai/dsh-client-ui-primitives` as a runtime dependency package, while
+  the settings-page bundle `require`s that module id from the shell's table
+  (the id still appears in the alpha.3 shell bundle, so the outcome is open).
+  Claiming the release needs one real settings-page load on alpha.3.
 
 ## 0.1.0
 

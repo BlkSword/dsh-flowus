@@ -83,6 +83,12 @@ The `@deepseek-ai/dsh-*` peer dependencies use one exact-version disjunction, `0
 
 The matrix above was established by measurement: the offline suite and the live smoke tests were executed against the packages shipped by each of the three runtimes, with no failures, and the named-export sets used by the plugin are identical across all three. The alpha range clauses are required rather than cosmetic: a prerelease version satisfies a range only when a comparator carries a prerelease identifier on the same `major.minor.patch`, so `~4.0.4` does not accept `4.0.5-alpha.1`, and `0.2.0-rc.2` does not accept `0.2.1-alpha.1`.
 
+**Newer releases are measured but not claimed.** `@deepseek-ai/dsh@0.2.1-alpha.3` and `alpha.4` are published; this plugin does not declare support yet:
+
+- **The host half passes on alpha.3.** Against a complete alpha.3 runtime (609 packages, peer closure resolved) all 164 offline tests pass exactly as on `0.2.0-rc.2` (161 passed, 0 failed, 3 live skipped), and the alpha.3 pairings (`cordis@4.0.5-alpha.2`, `schemastery@3.18.5-alpha.2`, `dsh-tools@0.2.1-alpha.3`) already fall inside the declared `~` and exact-disjunction ranges, so no declaration needs to change.
+- **The client half is unverified.** The alpha line no longer ships `@deepseek-ai/dsh-client-ui-primitives` as a runtime dependency package (it is absent from `node_modules\@deepseek-ai`), while the settings-page classic script `require`s that module id from the shell's table; the id still appears in the alpha.3 shell bundle, so the outcome is open. Claiming the release requires one real settings-page load on alpha.3.
+- `@deepseek-ai/dsh-atomic-write` joined the peer set as an optional peer: when present it supplies the atomic state-file write and the cross-process writer lock.
+
 ## First authorization
 
 ```
@@ -158,7 +164,7 @@ Configuration is supplied by a profile patch layer (`$DSH_HOME/profiles/web/cord
 
 ## Credentials and security
 
-- The state file is located at `%DSH_HOME%\flowus\oauth.json` (by default `C:\Users\<user>\.dsh\flowus\oauth.json`) and contains the dynamically registered `client_id`, the token set, the PKCE verifier and the discovery cache. Writes use atomic replacement (temporary file followed by rename) and set permissions to `0600` where the platform supports it.
+- The state file is located at `%DSH_HOME%\flowus\oauth.json` (by default `C:\Users\<user>\.dsh\flowus\oauth.json`) and contains the dynamically registered `client_id`, the token set, the PKCE verifier and the discovery cache. Writes prefer the harness primitives (`@deepseek-ai/dsh-atomic-write`: random-suffix sibling, `wx` exclusive create and rename, with its file lock serializing a cross-process read-modify-write; the peer is declared optional, and the store falls back to an equivalent local implementation), and set permissions to `0600` where the platform supports it. Logout also prunes leftover `<file>.*.tmp` and `<file>.corrupt` siblings.
 - The client is a public client: `token_endpoint_auth_method = "none"` together with PKCE S256, and no client secret exists. The refresh token is the only long-lived credential.
 - `logout` removes the tokens and the verifier while retaining the dynamic client registration. The registration endpoint is rate-limited (an observed `X-RateLimit-Limit` of 3), so reusing the registration avoids throttling on subsequent sign-ins.
 - Network endpoints in use: `mcp.flowus.cn` (resource metadata and the MCP data plane) and `api.flowus.cn` (authorization, token and registration).
@@ -193,19 +199,19 @@ Configuration is supplied by a profile patch layer (`$DSH_HOME/profiles/web/cord
 
 ## Development and testing
 
-Local development requires the following two prerequisites (`node_modules` is not tracked):
+Local development installs from the lockfile and links one DSH runtime in (`node_modules` is not tracked):
 
 ```powershell
-npm install --no-save --no-package-lock --legacy-peer-deps --ignore-scripts @modelcontextprotocol/client@^2.2.0
-# Let node --test load the real dsh-tools / schemastery: point the junction at the DSH installation
-New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai `
-  -Target "$(Split-Path (Get-Command dsh).Source)\..\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai"
+npm ci --ignore-scripts --legacy-peer-deps                    # install from the lockfile (includes typescript / @types/node)
+npm install --no-save --no-package-lock --ignore-scripts --legacy-peer-deps @deepseek-ai/dsh@0.2.0-rc.2
+npm run link-runtime                                          # link each package to that runtime
 
-npm test                                            # offline suite: 150 tests, 147 passed, 3 live tests skipped
-$env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js   # live smoke tests: 3
+npm run check                                                 # typecheck + offline suite: 164 tests, 161 passed, 3 live tests skipped
+npm audit                                                     # dependency audit, which needs the lockfile
+$env:DSH_FLOWUS_LIVE=1; node --test tests/flowus-live.test.js  # live smoke tests: 3
 ```
 
-> **The order matters.** Run `npm install` first and create the junction afterwards: npm treats the `@deepseek-ai/*` packages inside the junction as extraneous and unlinks them out of the DSH installation. To update dependencies while the junction exists, detach it first with `cmd /c rmdir node_modules\@deepseek-ai` and recreate it afterwards.
+> **Link layout and order.** `scripts/link-runtime-packages.mjs` links every `@deepseek-ai/*` package individually (a junction on Windows) instead of linking the whole scope directory. The difference is measurable: `npm install` deletes the individual links but *keeps* the packages they point at, while a whole-scope junction lets npm walk through the link and delete the packages inside the runtime — which is how one DSH installation was destroyed. The order still holds: run every npm command first, link afterwards, and re-run `npm run link-runtime` after any npm/pnpm command that follows.
 
 Test coverage:
 
@@ -213,11 +219,13 @@ Test coverage:
 | --- | --- |
 | `tests/tool-names.test.js` | Tool-naming contract (identical to the stock MCP bridge) |
 | `tests/command-grammar.test.js` | `/flowus` grammar |
-| `tests/store.test.js` | Atomic writes, serialization and corruption handling for the state file |
+| `tests/store.test.js` | Atomic writes for the state file (harness primitives and the local fallback), cross-instance serialization, corruption quarantine and leftover pruning |
 | `tests/oauth-provider.test.js` | `OAuthClientProvider` semantics, the issuer binding (a credential is never presented to another authorization server) and state invalidation scopes |
 | `tests/callback-server.test.js` | Callback validation (state, code, error, port fallback, abort) |
+| `tests/login.test.js` | The two-leg exchange with an injected `authImpl` (no network): success, already-authorized short circuit, no authorization URL, no exchange, browser disabled, cancellation, timeout, stale-redirect invalidation |
 | `tests/browser.test.js` | Shell-free browser launch and candidate fallback |
 | `tests/tool-bridge.test.js` | MCP JSON Schema to DSH parameter DSL, plus the output contract checked with DSH's own schema compiler |
+| `tests/text-bound.test.js` | Truncation edges for results and instructions: head and tail kept, omission stated, no split surrogate pair, `0` disables the bound |
 | `tests/http-api.test.js` | Settings-page host API: trust fence, method guard, `{ ok, snapshot }` envelope, error path |
 | `tests/client-bundle.test.js` | Browser half: `__ModuleLoader__` registration contract, dictionary key parity, slot registration, host-route path cross-check, view-model branches and one full render |
 | `tests/mcp-session.test.js` | Result normalization, concurrency-rejection detection, the serial queue (ordering, concurrency bound, failure isolation) and authorization-error classification |

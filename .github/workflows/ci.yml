@@ -1,0 +1,48 @@
+# The 150-test offline suite plus the JSDoc typecheck, on every release the
+# plugin claims in `dsh.compatibility.dshReleases`. The live smoke tests stay
+# out: they need a real FlowUs workspace and a browser authorization.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh:
+          - 0.2.0-rc.2
+          - 0.2.1-alpha.1
+          - 0.2.1-alpha.2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` empties node_modules, which is exactly what the link step below
+      # relies on: the runtime is installed first, then linked, and no npm
+      # command runs after that (npm prunes through the links).
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+
+      - name: Install the DSH runtime under test
+        run: npm install --no-save --no-package-lock --ignore-scripts --legacy-peer-deps @deepseek-ai/dsh@${{ matrix.dsh }}
+
+      - name: Link the runtime packages
+        run: node scripts/link-runtime-packages.mjs
+
+      - name: Typecheck the JSDoc
+        run: npm run typecheck
+
+      - name: Offline test suite
+        run: node --test
