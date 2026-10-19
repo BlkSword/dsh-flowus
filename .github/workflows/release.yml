@@ -1,0 +1,50 @@
+# Publishes the GitHub release for a version tag from CHANGELOG.md.
+#
+# The repository convention is one Chinese release note per version, ending with
+# the installation block. CHANGELOG.md is the single source of truth for the
+# notes, so a release cannot drift from it; re-pushing a tag updates the release
+# in place instead of failing.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract this tag's notes from CHANGELOG.md and append the install block
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            $0 == "## " ver { capture = 1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "CHANGELOG.md has no '## ${version}' section" >&2
+            exit 1
+          fi
+          {
+            cat release-notes.md
+            printf '\n## 安装\n\n'
+            printf '```powershell\ndsh plugin --profile web add @blksword/dsh-flowus@%s\n```\n\n' "$version"
+            printf '安装后需重启 `dsh web` 并刷新浏览器页面（客户端入口图在进程启动时组装）。授权凭据保存在 `<DSH_HOME>/flowus/oauth.json`。\n'
+          } > release-body.md
+
+      - name: Create or update the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release-body.md
+          draft: false
+          prerelease: false
