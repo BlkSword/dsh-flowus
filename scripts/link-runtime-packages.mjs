@@ -20,7 +20,7 @@
  * that is not a link stops the run instead.
  */
 
-import { mkdir, readdir, readFile, rm, symlink, lstat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, rm, symlink, lstat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 const projectRoot = resolve(import.meta.dirname, '..');
@@ -51,7 +51,9 @@ async function main() {
 
   const runtimeManifest = join(runtimeDir, 'package.json');
   if (!(await exists(runtimeManifest))) {
-    throw new Error(`no DSH runtime at ${runtimeDir}; install one first (npm install --no-save @deepseek-ai/dsh@<release>)`);
+    throw new Error(
+      `no DSH runtime at ${runtimeDir}; install one first with "npm install --no-save --ignore-scripts @deepseek-ai/dsh@<release>", or name an existing installation: node scripts/link-runtime-packages.mjs <path-to-dsh>`,
+    );
   }
   const runtime = JSON.parse(await readFile(runtimeManifest, 'utf8'));
 
@@ -65,21 +67,36 @@ async function main() {
 
   if (entries.length === 0) throw new Error(`no @deepseek-ai packages found under ${bundled}`);
 
+  // When npm hoists the runtime's dependencies next to the runtime package, the
+  // watch target and the link location are the same directory: the packages are
+  // already resolvable and there is nothing to link. Only a package that is
+  // neither a link nor the intended target is a real conflict.
   await mkdir(linkRoot, { recursive: true });
   const linked = [];
+  const alreadyInPlace = [];
   for (const name of entries) {
+    const target = join(bundled, name);
     const link = join(linkRoot, name);
     if (await exists(link)) {
       const current = await lstat(link);
       if (!current.isSymbolicLink()) {
-        throw new Error(`${link} exists and is not a link; move it aside, then re-run (nothing was deleted)`);
+        if ((await realpath(link)) === (await realpath(target))) {
+          alreadyInPlace.push(name);
+          continue;
+        }
+        throw new Error(`${link} exists and is not ${target}; move it aside, then re-run (nothing was deleted)`);
       }
       await rm(link, { force: true });
     }
-    await symlink(join(bundled, name), link, process.platform === 'win32' ? 'junction' : 'dir');
+    await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir');
     linked.push(name);
   }
 
+  if (alreadyInPlace.length > 0 && linked.length === 0) {
+    console.log(`${runtime.name}@${runtime.version} ships its ${alreadyInPlace.length} @deepseek-ai packages next to the runtime; nothing to link (${bundled})`);
+    return;
+  }
+  if (alreadyInPlace.length > 0) console.log(`left ${alreadyInPlace.length} already-resolvable packages in place`);
   console.log(`linked ${linked.length} packages from ${runtime.name}@${runtime.version} (${bundled})`);
   console.log('re-run this script after any npm/pnpm command in this checkout');
 }
