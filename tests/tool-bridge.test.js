@@ -343,3 +343,43 @@ test('describeTool falls back to the title and always names the raw tool', () =>
   assert.equal(describeTool({ name: 'a', title: 'Tool A' }), 'Tool A\n(FlowUs MCP tool: a)');
   assert.equal(describeTool({ name: 'a' }), 'FlowUs MCP tool "a"');
 });
+
+test('a read-only tool passes its replay permission to the session', async () => {
+  const seen = [];
+  const [readTool, writeTool] = buildFlowusToolDefinitions({
+    serverName: 'flowus',
+    toolCallTimeoutMs: 1_000,
+    tools: [
+      { name: 'flowus_search_text', description: 'Search', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+      { name: 'flowus_create_page', description: 'Create', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false } },
+    ],
+    callTool: async (rawName, args, options) => {
+      seen.push({ rawName, idempotent: options.idempotent });
+      return { text: 'ok', blocks: [], isError: false };
+    },
+  });
+
+  await readTool.definition.execute({}, { signal: new AbortController().signal });
+  await writeTool.definition.execute({}, { signal: new AbortController().signal });
+  assert.deepEqual(seen, [
+    { rawName: 'flowus_search_text', idempotent: true },
+    { rawName: 'flowus_create_page', idempotent: false },
+  ]);
+});
+
+test('a transport failure reaches the model without the gateway markup', async () => {
+  const [built] = buildFlowusToolDefinitions({
+    serverName: 'flowus',
+    toolCallTimeoutMs: 1_000,
+    tools: [{ name: 'flowus_search_text', description: 'Search', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }],
+    callTool: async () => {
+      throw Object.assign(new Error('Error POSTing to endpoint: <html><body>503 Service Temporarily Unavailable</body></html>'), { status: 503 });
+    },
+  });
+
+  await assert.rejects(built.definition.execute({}, { signal: new AbortController().signal }), (error) => {
+    assert.match(error.message, /HTTP 503/u);
+    assert.ok(!/[<>]/u.test(error.message), 'no markup in the model-facing error');
+    return true;
+  });
+});

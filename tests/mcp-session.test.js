@@ -12,14 +12,22 @@ import {
   CONCURRENCY_MAX_ATTEMPTS,
   FlowusAuthRequiredError,
   FlowusMcpSession,
+  TRANSIENT_RETRY_POLICY,
+  backoffDelay,
+  classifyFailure,
   createSerialQueue,
+  describeFailure,
   isAuthRequired,
   isConcurrencyRejection,
+  isRetryableFailure,
   isSessionMissing,
   normalizeCallToolResult,
 } from '../lib/mcp-session.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A transient policy that keeps the retry tests fast and deterministic. */
+const FAST_RETRY = Object.freeze({ maxRetries: 3, baseDelayMs: 1, maxDelayMs: 2 });
 
 /**
  * A session over a fake SDK client/transport pair, so the reconnect path runs
@@ -34,6 +42,8 @@ function fakeSession(options = {}) {
     provider: {},
     log: (message) => state.logs.push(message),
     toolCallTimeoutMs: 1_000,
+    retryPolicy: FAST_RETRY,
+    random: () => 0,
     onToolsChanged:
       options.onToolsChanged ??
       ((next) => {
@@ -72,6 +82,13 @@ function fakeSession(options = {}) {
 /** The server's own "this session is gone" answer, in the shape the SDK throws. */
 const sessionMissing = () =>
   new Error('Error POSTing to endpoint: {"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"Session not found"}}');
+
+/** A gateway rejection shaped like the streamable-HTTP transport's failure. */
+const gatewayFailure = (status = 503) =>
+  Object.assign(new Error(`Error POSTing to endpoint: <html><head><title>${status} Service Temporarily Unavailable</title></head></html>`), {
+    status,
+    text: `<html><head><title>${status} Service Temporarily Unavailable</title></head></html>`,
+  });
 
 test('a text result projects to text and keeps its raw blocks', () => {
   const value = normalizeCallToolResult({ content: [{ type: 'text', text: 'hello' }] });
@@ -296,4 +313,154 @@ test('a failed tool-list refresh is reported, not fatal', async () => {
   state.handlers.onListChanged(new Error('transport closed'), undefined);
   assert.match(state.logs.join('\n'), /tool list refresh failed/u);
   assert.deepEqual(state.generations, []);
+});
+
+test('a failure is classified by what the caller can do about it', () => {
+  assert.equal(classifyFailure(gatewayFailure(503)), 'gateway');
+  assert.equal(classifyFailure(gatewayFailure(502)), 'gateway');
+  assert.equal(classifyFailure(gatewayFailure(504)), 'gateway');
+  assert.equal(classifyFailure(Object.assign(new Error('server error'), { status: 500 })), 'transient');
+  assert.equal(classifyFailure(Object.assign(new Error('slow down'), { status: 429 })), 'transient');
+  assert.equal(classifyFailure(Object.assign(new Error('reset'), { code: 'ECONNRESET' })), 'transient');
+  assert.equal(classifyFailure(new Error('fetch failed')), 'transient');
+  assert.equal(classifyFailure(sessionMissing()), 'session');
+  assert.equal(classifyFailure({ code: -32002 }), 'concurrency');
+  assert.equal(classifyFailure(new UnauthorizedError()), 'auth');
+  assert.equal(classifyFailure(new Error('not_found')), undefined);
+  // Older transport paths only embed the status in the message.
+  assert.equal(classifyFailure(new Error('Error POSTing to endpoint: 503 Service Temporarily Unavailable')), 'gateway');
+});
+
+test('only a gateway rejection is replayed for every call', () => {
+  assert.equal(isRetryableFailure('gateway', { idempotent: false }), true);
+  assert.equal(isRetryableFailure('gateway', { idempotent: true }), true);
+  assert.equal(isRetryableFailure('transient', { idempotent: true }), true);
+  assert.equal(isRetryableFailure('transient', { idempotent: false }), false);
+  assert.equal(isRetryableFailure('session', { idempotent: true }), false);
+  assert.equal(isRetryableFailure('concurrency', { idempotent: true }), false);
+  assert.equal(isRetryableFailure('auth', { idempotent: true }), false);
+  assert.equal(isRetryableFailure(undefined, { idempotent: true }), false);
+});
+
+test('backoff grows exponentially with equal jitter and respects the cap', () => {
+  const policy = { baseDelayMs: 500, maxDelayMs: 8_000 };
+  assert.equal(backoffDelay(1, policy, () => 0), 250);
+  assert.equal(backoffDelay(1, policy, () => 1), 500);
+  assert.equal(backoffDelay(2, policy, () => 1), 1_000);
+  assert.equal(backoffDelay(3, policy, () => 1), 2_000);
+  assert.equal(backoffDelay(10, { baseDelayMs: 500, maxDelayMs: 3_000 }, () => 1), 3_000, 'the cap holds');
+  assert.ok(backoffDelay(3) >= 1_000 && backoffDelay(3) <= 2_000, 'the default policy stays inside its jitter bounds');
+  assert.equal(TRANSIENT_RETRY_POLICY.maxRetries, 3);
+});
+
+test('a gateway page is never surfaced as markup', () => {
+  assert.equal(describeFailure(gatewayFailure(503)), 'FlowUs gateway is temporarily unavailable (HTTP 503)');
+  assert.equal(describeFailure(Object.assign(new Error('x'), { status: 429 })), 'FlowUs is rate limiting this client (HTTP 429)');
+  assert.equal(describeFailure(Object.assign(new Error('x'), { status: 500 })), 'FlowUs failed this request (HTTP 500)');
+
+  const stripped = describeFailure(new Error('boom <html><head><title>503</title></head><body>nginx</body></html>'));
+  assert.ok(!/[<>]/u.test(stripped), `expected no markup, got ${stripped}`);
+  assert.match(stripped, /boom/u);
+  assert.match(stripped, /nginx/u);
+
+  const long = describeFailure(new Error('x'.repeat(500)));
+  assert.equal(long.length, 200);
+  assert.ok(long.endsWith('…'));
+});
+
+test('a read-only call rides out gateway 503s and logs each retry', async () => {
+  let attempt = 0;
+  const { session, state } = fakeSession({
+    onCall: () => {
+      attempt += 1;
+      if (attempt <= 2) throw gatewayFailure(503);
+      return { content: [{ type: 'text', text: 'ok' }] };
+    },
+  });
+  await session.connect();
+  const value = await session.callTool('flowus_search_text', {}, { idempotent: true });
+  assert.equal(value.text, 'ok');
+  assert.equal(state.calls, 3);
+  assert.match(state.logs.join('\n'), /failed transiently; retrying/u);
+});
+
+test('a gateway rejection is replayed even for a write, because it never ran', async () => {
+  let attempt = 0;
+  const { session, state } = fakeSession({
+    onCall: () => {
+      attempt += 1;
+      if (attempt === 1) throw gatewayFailure(503);
+      return { content: [] };
+    },
+  });
+  await session.connect();
+  await session.callTool('flowus_create_page', { title: 'x' });
+  assert.equal(state.calls, 2);
+});
+
+test('an ambiguous failure is never replayed for a write', async () => {
+  const { session, state } = fakeSession({
+    onCall: () => {
+      throw Object.assign(new Error('server error'), { status: 500 });
+    },
+  });
+  await session.connect();
+  await assert.rejects(session.callTool('flowus_create_page', {}), /server error/u);
+  assert.equal(state.calls, 1, 'a write is not replayed while it may already have been applied');
+});
+
+test('an ambiguous failure is replayed for a read', async () => {
+  let attempt = 0;
+  const { session, state } = fakeSession({
+    onCall: () => {
+      attempt += 1;
+      if (attempt === 1) throw Object.assign(new Error('server error'), { status: 500 });
+      return { content: [] };
+    },
+  });
+  await session.connect();
+  await session.callTool('flowus_search_text', {}, { idempotent: true });
+  assert.equal(state.calls, 2);
+});
+
+test('retries are bounded and the last failure is what surfaces', async () => {
+  const { session, state } = fakeSession({
+    onCall: () => {
+      throw gatewayFailure(503);
+    },
+  });
+  await session.connect();
+  await assert.rejects(session.callTool('flowus_search_text', {}, { idempotent: true }), /503/u);
+  assert.equal(state.calls, 1 + FAST_RETRY.maxRetries);
+  assert.match(state.logs.join('\n'), /failed \(gateway\): FlowUs gateway is temporarily unavailable/u);
+});
+
+test('tool discovery retries a gateway rejection before giving up', async () => {
+  let listed = 0;
+  const { session } = fakeSession({
+    onList: () => {
+      listed += 1;
+      if (listed === 1) throw gatewayFailure(503);
+      return { tools: [{ name: 'flowus_help' }] };
+    },
+  });
+  await session.connect();
+  const tools = await session.listTools();
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ['flowus_help'],
+  );
+  assert.equal(listed, 2);
+});
+
+test('a cancelled call stops waiting for its retry', async () => {
+  const controller = new AbortController();
+  const { session } = fakeSession({
+    onCall: () => {
+      controller.abort();
+      throw gatewayFailure(503);
+    },
+  });
+  await session.connect();
+  await assert.rejects(session.callTool('flowus_search_text', {}, { idempotent: true, signal: controller.signal }), /cancelled/u);
 });

@@ -119,12 +119,31 @@ All notable changes to this plugin are documented here. The format follows
   pending banner and the error line are announced through `aria-live`/`alert`.
   The host snapshot's tool entries now carry `readOnly`.
 
+### Fixed
+
+- **Transient gateway failures are retried instead of recorded forever.** The
+  endpoint answers short 503 windows from the nginx in front of it (measured:
+  every MCP endpoint 503, healthy again eight seconds later). A gateway rejection
+  is now replayed with bounded exponential backoff and jitter (three retries,
+  500 ms base, 8 s cap), an ambiguous failure (500/429/reset) is replayed only
+  for a read-only tool so a write is never applied twice, and a transient sync
+  failure now re-syncs on its own after 5 s, 15 s and 60 s the way the harness's
+  own MCP bridge reconnects. Verified live by having the first two attempts
+  return the real 503 page: the third reached the server and returned real data.
+- **Failures are described in one short, markup-free sentence.** The SDK puts the
+  whole response body in the error message, so a gateway page used to reach the
+  status snapshot, the settings page, `/flowus status` and the model as hundreds
+  of characters of HTML. Everything the plugin surfaces now goes through a
+  description that names a known status, strips markup, collapses whitespace and
+  caps the length; the snapshot also carries `lastErrorKind`, so the settings
+  page and `/flowus status` say the failure is temporary and being retried.
+
 ### Compatibility
 
 - Unchanged: DSH `0.2.0-rc.2`, `0.2.1-alpha.1`, `0.2.1-alpha.2`; the same peer
   ranges as `0.1.0`, plus the new optional `@deepseek-ai/dsh-atomic-write` peer.
 - **`0.2.1-alpha.3` is verified for the host half but not claimed.** On a
-  complete alpha.3 runtime (609 packages, peer closure resolved) all 164 offline
+  complete alpha.3 runtime (609 packages, peer closure resolved) all 180 offline
   tests pass exactly as on `0.2.0-rc.2`, and the alpha.3 pairings
   (`cordis@4.0.5-alpha.2`, `schemastery@3.18.5-alpha.2`,
   `dsh-tools@0.2.1-alpha.3`) already fall inside the declared ranges. The client

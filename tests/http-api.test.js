@@ -62,6 +62,20 @@ function routes(overrides = {}) {
   return { calls, routes: createApiRoutes({ controller, guard: () => undefined, log: () => {} }) };
 }
 
+/** @param {{ describeError?: (error: unknown) => string }} [options] */
+function routesWithDescriber(options = {}) {
+  const controller = {
+    status: async () => {
+      throw new Error('Error POSTing to endpoint: <html><body>503 Service Temporarily Unavailable</body></html>');
+    },
+    login: async () => snapshot,
+    loginCancel: async () => snapshot,
+    logout: async () => snapshot,
+    reload: async () => snapshot,
+  };
+  return createApiRoutes({ controller, guard: () => undefined, log: () => {}, ...options });
+}
+
 test('every declared route has a matching handler with the declared method', () => {
   const { routes: built } = routes();
   assert.equal(built.length, API_ROUTES.length);
@@ -175,4 +189,16 @@ test('sendJson writes one JSON body with the plugin headers', () => {
   assert.equal(res.statusCode, 201);
   assert.equal(res.headers['content-type'], 'application/json; charset=utf-8');
   assert.deepEqual(body(), { hello: 'world' });
+});
+
+test('the injected describer decides the error text the page reads', async () => {
+  const plain = routesWithDescriber();
+  const { req, res, body } = exchange('GET');
+  await plain[0].handler(req, res);
+  assert.match(body().error, /<html>/u, 'the default keeps the raw message');
+
+  const sanitized = routesWithDescriber({ describeError: () => 'FlowUs gateway is temporarily unavailable (HTTP 503)' });
+  const exchange2 = exchange('GET');
+  await sanitized[0].handler(exchange2.req, exchange2.res);
+  assert.deepEqual(exchange2.body(), { ok: false, error: 'FlowUs gateway is temporarily unavailable (HTTP 503)' });
 });

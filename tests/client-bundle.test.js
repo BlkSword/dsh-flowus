@@ -463,3 +463,25 @@ test('the rendered tool list labels read-only and write tools', () => {
   );
   for (const tag of tags) assert.notEqual(tag.tone, 'quiet', 'quiet has no fill');
 });
+
+test('a transient failure is announced as self-healing, a fatal one is not', () => {
+  const transient = statusViewModel(snapshotOf({ lastErrorKind: 'gateway', lastError: 'FlowUs gateway is temporarily unavailable (HTTP 503)' }), t);
+  assert.equal(transient.errorTransient, true);
+
+  for (const kind of ['transient', 'gateway']) {
+    assert.equal(statusViewModel(snapshotOf({ lastErrorKind: kind, lastError: 'x' }), t).errorTransient, true, kind);
+  }
+  for (const kind of ['auth', 'session', 'concurrency', 'terminal', null, undefined]) {
+    assert.equal(statusViewModel(snapshotOf({ lastErrorKind: kind, lastError: 'x' }), t).errorTransient, false, String(kind));
+  }
+
+  hookState = {
+    phase: 'ready',
+    snapshot: snapshotOf({ lastErrorKind: 'gateway', lastError: 'FlowUs gateway is temporarily unavailable (HTTP 503)' }),
+    error: undefined,
+  };
+  const rendered = collectText(FlowusSettingsPage({ t })).join('\n');
+  hookState = undefined;
+  assert.match(rendered, /temporarily unavailable/u);
+  assert.match(rendered, /retries automatically/u);
+});

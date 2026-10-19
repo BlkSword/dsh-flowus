@@ -215,3 +215,28 @@ test('disposal releases the registrations', async () => {
   assert.equal(commands.size, 0);
   assert.equal(sections.length, 0);
 });
+
+test('a transient transport failure is reported as temporary and sanitized', async () => {
+  // A closed loopback port fails fast with ECONNREFUSED, which is transient.
+  const { commands, statePath, dispose } = await boot({ serverUrl: 'http://127.0.0.1:9/message' });
+  try {
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        tokens: { access_token: 'a', token_type: 'Bearer', refresh_token: 'r' },
+        resourceUrl: 'http://127.0.0.1:9/message',
+      }),
+    );
+    const reload = await run(commands, 'reload');
+    assert.equal(reload.kind, 'error');
+    assert.match(reload.text, /暂时性/u, 'the command says the plugin retries on its own');
+    assert.doesNotMatch(reload.text, /[<>]/u, 'no markup reaches the command output');
+
+    const status = await run(commands, '');
+    const errorLine = status.text.split('\n').find((line) => line.includes('最近错误')) ?? '';
+    assert.match(errorLine, /暂时性，插件会自动重试/u);
+    assert.doesNotMatch(errorLine, /[<>]/u);
+  } finally {
+    await dispose();
+  }
+});
